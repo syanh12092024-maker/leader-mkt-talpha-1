@@ -1,13 +1,30 @@
 import { GoogleSpreadsheet } from "google-spreadsheet";
 import { JWT } from "google-auth-library";
 import path from "path";
+import fs from "fs";
+
+function loadCredentials() {
+    // Cloud: base64 env var
+    if (process.env.GOOGLE_CREDENTIALS_BASE64) {
+        return JSON.parse(Buffer.from(process.env.GOOGLE_CREDENTIALS_BASE64, "base64").toString("utf-8"));
+    }
+    // Cloud: JSON string env var
+    if (process.env.GOOGLE_CREDENTIALS_JSON) {
+        return JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON);
+    }
+    // Local: read file
+    const keyPath = path.resolve(process.cwd(), "../Agentic-AI-Levelup/config/bigquery-key.json");
+    if (fs.existsSync(keyPath)) {
+        return JSON.parse(fs.readFileSync(keyPath, "utf-8"));
+    }
+    throw new Error("No Google credentials found. Set GOOGLE_CREDENTIALS_BASE64 env var.");
+}
 
 export class GoogleSheetsSyncService {
     private doc: GoogleSpreadsheet;
 
     constructor(sheetId: string) {
-        const keyPath = path.resolve(process.cwd(), "../Agentic-AI-Levelup/config/bigquery-key.json");
-        const creds = require(keyPath);
+        const creds = loadCredentials();
 
         const serviceAccountAuth = new JWT({
             email: creds.client_email,
