@@ -37,3 +37,4 @@ coverage/
 # AGENTS.md        <- KEEP
 # .cursorrules     <- KEEP
 # docs/            <- KEEP
+.vercel
