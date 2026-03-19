@@ -122,6 +122,7 @@ export default function BroadcastTab() {
     const [remainingMs, setRemainingMs] = useState(0);
     const scheduleTimerRef = useRef<NodeJS.Timeout | null>(null);
     const countdownRef = useRef<NodeJS.Timeout | null>(null);
+    const abortControllerRef = useRef<AbortController | null>(null);
     const [isLoadingShops, setIsLoadingShops] = useState(true);
     const [isLoadingCustomers, setIsLoadingCustomers] = useState(false);
     const [isSending, setIsSending] = useState(false);
@@ -377,6 +378,9 @@ export default function BroadcastTab() {
         setIsSending(true);
         setSendResults(null);
 
+        abortControllerRef.current = new AbortController();
+        const signal = abortControllerRef.current.signal;
+
         const recipients = customers
             .filter((c) => selectedIds.has(c.id))
             .map((c) => ({ psid: c.psid, pageFbId: c.pageFbId, name: c.customerName, conversationId: c.id }));
@@ -391,6 +395,7 @@ export default function BroadcastTab() {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(payload),
+                signal,
             });
             const data = await res.json();
             if (data.error) {
@@ -398,11 +403,16 @@ export default function BroadcastTab() {
             } else {
                 setSendResults(data.results || []);
             }
-        } catch (err) {
-            console.error("Broadcast error:", err);
-            setSendResults([{ psid: "error", name: "System", success: false, error: "Network error" }]);
+        } catch (err: unknown) {
+            if (err instanceof Error && err.name === 'AbortError') {
+                setSendResults([{ psid: 'cancelled', name: 'System', success: false, error: '🚫 Đã huỷ gửi' }]);
+            } else {
+                console.error("Broadcast error:", err);
+                setSendResults([{ psid: "error", name: "System", success: false, error: "Network error" }]);
+            }
         } finally {
             setIsSending(false);
+            abortControllerRef.current = null;
         }
     };
 
@@ -867,6 +877,15 @@ export default function BroadcastTab() {
                         {totalMediaCount > 0 && <span className="text-violet-500"> · 📷 {totalMediaCount} media</span>}
                     </p>
                     <div className="flex items-center gap-2">
+                        {/* Nút Huỷ - chỉ hiện khi đang gửi */}
+                        {isSending && (
+                            <button
+                                onClick={() => { abortControllerRef.current?.abort(); }}
+                                className="flex items-center gap-1.5 rounded-xl border border-red-300 bg-red-50 px-4 py-2.5 text-sm font-semibold text-red-600 hover:bg-red-100 transition-colors"
+                            >
+                                <XCircle className="h-4 w-4" /> Huỷ gửi
+                            </button>
+                        )}
                         <motion.button
                             onClick={() => handleSendBox(0)}
                             disabled={isSending || selectedIds.size === 0}
