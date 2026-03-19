@@ -238,14 +238,14 @@ export default function BroadcastTab() {
     }, []);
 
     // Load customers (with optional page filter)
-    const loadCustomers = useCallback(async (shopId: string, page = 1, pageFilter = "") => {
-        if (!shopId) return;
+    const loadCustomers = async () => {
+        if (!selectedShopId) return;
         setIsLoadingCustomers(true);
         setSelectedIds(new Set());
 
         try {
-            let url = `/api/broadcast?shopId=${shopId}&page=${page}`;
-            if (pageFilter) url += `&pageFilter=${encodeURIComponent(pageFilter)}`;
+            let url = `/api/broadcast?shopId=${selectedShopId}&page=${currentPage}`;
+            if (selectedPageId) url += `&pageFilter=${encodeURIComponent(selectedPageId)}`;
 
             const res = await fetch(url);
             const data = await res.json();
@@ -254,7 +254,7 @@ export default function BroadcastTab() {
                 setCustomers(data.customers);
                 setTotalCustomers(data.total || data.customers.length);
                 setTotalPages(data.totalPages || 1);
-                setCurrentPage(data.page || page);
+                setCurrentPage(data.page || currentPage);
             } else if (data.error) {
                 console.error("Load customers error:", data.error);
                 setCustomers([]);
@@ -265,7 +265,7 @@ export default function BroadcastTab() {
         } finally {
             setIsLoadingCustomers(false);
         }
-    }, []);
+    };
 
     // Toggle selection
     const toggleSelect = (id: string) => {
@@ -597,7 +597,7 @@ export default function BroadcastTab() {
             </div>
 
             {/* Customer list (chỉ hiện khi đã lọc) */}
-            {filterActive && customers.length > 0 && (
+            {customers.length > 0 && (
                 <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
                     {/* Select all bar */}
                     <div className="flex items-center gap-3 px-4 py-2.5 border-b border-slate-100 bg-slate-50/60">
