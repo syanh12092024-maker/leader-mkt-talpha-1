@@ -491,7 +491,7 @@ export default function BroadcastTab() {
                             <div className="fixed inset-0 z-20" onClick={() => setIsPageDropdownOpen(false)} />
                             <div className="absolute z-30 top-full left-0 right-0 mt-1 rounded-xl border border-slate-200 bg-white shadow-xl max-h-[280px] overflow-y-auto">
                                 <button
-                                    onClick={() => { setSelectedPageId(""); setIsPageDropdownOpen(false); setPageSearch(""); if (selectedShopId) loadCustomers(selectedShopId, 1, ""); }}
+                                    onClick={() => { setSelectedPageId(""); setIsPageDropdownOpen(false); setPageSearch(""); setCustomers([]); setSelectedIds(new Set()); setSendResults(null); setFilterActive(false); }}
                                     className={`w-full text-left px-3 py-2 text-sm hover:bg-violet-50 transition-colors border-b border-slate-100 ${!selectedPageId ? "bg-violet-50 text-violet-700 font-semibold" : "text-slate-600"}`}
                                 >
                                     Tất cả pages ({pages.length})
@@ -499,7 +499,7 @@ export default function BroadcastTab() {
                                 {filteredPages.map((p) => (
                                     <button
                                         key={p.pageId}
-                                        onClick={() => { setSelectedPageId(p.pageId); setIsPageDropdownOpen(false); setPageSearch(""); if (selectedShopId) loadCustomers(selectedShopId, 1, p.pageId); }}
+                                        onClick={() => { setSelectedPageId(p.pageId); setIsPageDropdownOpen(false); setPageSearch(""); setCustomers([]); setSelectedIds(new Set()); setSendResults(null); setFilterActive(false); }}
                                         className={`w-full text-left px-3 py-2 text-sm hover:bg-violet-50 transition-colors ${selectedPageId === p.pageId ? "bg-violet-50 text-violet-700 font-semibold" : "text-slate-700"}`}
                                     >
                                         <span className="block truncate">{p.name}</span>
@@ -547,7 +547,7 @@ export default function BroadcastTab() {
                     <button onClick={() => loadCustomers(selectedShopId, currentPage, selectedPageId)} disabled={!selectedShopId || isLoadingCustomers} className="rounded-xl border border-slate-200 bg-white p-2.5 text-slate-600 hover:bg-slate-50 transition-colors disabled:opacity-50 shadow-sm">
                         <RefreshCw className={`h-4 w-4 ${isLoadingCustomers ? "animate-spin" : ""}`} />
                     </button>
-                    <button onClick={() => setFilterActive(true)} disabled={customers.length === 0} className="rounded-xl bg-gradient-to-r from-violet-600 to-purple-600 px-4 py-2.5 text-xs font-semibold text-white shadow-sm hover:shadow-md transition-all disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap">
+                    <button onClick={async () => { await loadCustomers(selectedShopId, 1, selectedPageId); setFilterActive(true); }} disabled={!selectedShopId || isLoadingCustomers} className="rounded-xl bg-gradient-to-r from-violet-600 to-purple-600 px-4 py-2.5 text-xs font-semibold text-white shadow-sm hover:shadow-md transition-all disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap">
                         🔍 Lọc data
                     </button>
                     {filterActive && (
@@ -802,7 +802,7 @@ export default function BroadcastTab() {
                                     <button
                                         key={hour}
                                         onClick={() => handleSchedule(hour)}
-                                        disabled={selectedIds.size === 0 || !fullMessage.trim()}
+                                        disabled={selectedIds.size === 0 || messages.every(m => !m?.trim())}
                                         className={`relative rounded-lg px-3 py-2.5 text-center transition-all border-2 disabled:opacity-40 disabled:cursor-not-allowed ${
                                             isActive
                                                 ? "border-amber-500 bg-amber-500 text-white shadow-md shadow-amber-200"
