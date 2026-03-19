@@ -770,8 +770,7 @@ export default function BroadcastTab() {
                 </div>
 
                 {/* ⏰ Schedule Timer */}
-                {selectedShopId && (
-                    <div className="rounded-lg border border-amber-100 bg-gradient-to-r from-amber-50/50 to-orange-50/30 p-3 space-y-2">
+                <div className="rounded-lg border border-amber-100 bg-gradient-to-r from-amber-50/50 to-orange-50/30 p-3 space-y-2">
                         <div className="flex items-center justify-between">
                             <label className="text-[11px] font-semibold text-amber-700 flex items-center gap-1.5">
                                 <CalendarClock className="h-4 w-4" />
@@ -859,7 +858,7 @@ export default function BroadcastTab() {
                             </div>
                         )}
                     </div>
-                )}
+
 
                 {/* Send Button */}
                 <div className="flex items-center justify-between pt-1">
