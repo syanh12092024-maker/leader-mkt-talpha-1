@@ -963,8 +963,41 @@ export default function BroadcastTab() {
                             <div key={s.id} className={`rounded-xl border p-3 space-y-2 transition-colors ${
                                 s.isActive ? "border-violet-200 bg-violet-50/40" : "border-slate-200 bg-slate-50/60"
                             }`}>
-                                {/* Row 1: Shop/Page + status + actions */}
-                                <div className="flex items-start justify-between gap-2">
+                                {/* Row 1: Actions (left) + Info (right) */}
+                                <div className="flex items-start gap-3">
+                                    {/* Action buttons - đầu hàng */}
+                                    <div className="flex flex-col gap-1 flex-shrink-0 pt-0.5">
+                                        {/* Pause / Resume */}
+                                        <button
+                                            onClick={() => toggleScheduleActive(s.id)}
+                                            title={s.isActive ? "Tạm dừng" : "Tiếp tục"}
+                                            className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-semibold transition-colors ${
+                                                s.isActive
+                                                    ? "bg-yellow-100 text-yellow-700 hover:bg-yellow-200"
+                                                    : "bg-green-100 text-green-700 hover:bg-green-200"
+                                            }`}
+                                        >
+                                            {s.isActive ? <><Timer className="h-3 w-3" /> Dừng</> : <><Clock className="h-3 w-3" /> Chạy</>}
+                                        </button>
+                                        {/* Edit note */}
+                                        <button
+                                            onClick={() => startEditNote(s)}
+                                            title="Ghi chú"
+                                            className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-semibold bg-blue-50 text-blue-500 hover:bg-blue-100 transition-colors"
+                                        >
+                                            <MessageSquare className="h-3 w-3" /> Ghi chú
+                                        </button>
+                                        {/* Delete */}
+                                        <button
+                                            onClick={() => deleteSchedule(s.id)}
+                                            title="Xoá"
+                                            className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-semibold bg-red-50 text-red-400 hover:bg-red-100 transition-colors"
+                                        >
+                                            <X className="h-3 w-3" /> Xoá
+                                        </button>
+                                    </div>
+
+                                    {/* Info */}
                                     <div className="flex-1 min-w-0">
                                         <div className="flex items-center gap-1.5 flex-wrap">
                                             <span className="text-[11px] font-bold text-slate-700">{s.shopName}</span>
@@ -997,39 +1030,9 @@ export default function BroadcastTab() {
                                             </p>
                                         )}
                                     </div>
-
-                                    {/* Action buttons */}
-                                    <div className="flex items-center gap-1 flex-shrink-0">
-                                        {/* Pause / Resume */}
-                                        <button
-                                            onClick={() => toggleScheduleActive(s.id)}
-                                            title={s.isActive ? "Tạm dừng" : "Tiếp tục"}
-                                            className={`p-1.5 rounded-lg transition-colors ${
-                                                s.isActive
-                                                    ? "bg-yellow-100 text-yellow-700 hover:bg-yellow-200"
-                                                    : "bg-green-100 text-green-700 hover:bg-green-200"
-                                            }`}
-                                        >
-                                            {s.isActive ? <Timer className="h-3.5 w-3.5" /> : <Clock className="h-3.5 w-3.5" />}
-                                        </button>
-                                        {/* Edit note */}
-                                        <button
-                                            onClick={() => startEditNote(s)}
-                                            title="Ghi chú"
-                                            className="p-1.5 rounded-lg bg-blue-50 text-blue-500 hover:bg-blue-100 transition-colors"
-                                        >
-                                            <MessageSquare className="h-3.5 w-3.5" />
-                                        </button>
-                                        {/* Delete */}
-                                        <button
-                                            onClick={() => deleteSchedule(s.id)}
-                                            title="Xoá"
-                                            className="p-1.5 rounded-lg bg-red-50 text-red-400 hover:bg-red-100 transition-colors"
-                                        >
-                                            <X className="h-3.5 w-3.5" />
-                                        </button>
-                                    </div>
                                 </div>
+
+
 
                                 {/* Note row */}
                                 {isEditing && (
