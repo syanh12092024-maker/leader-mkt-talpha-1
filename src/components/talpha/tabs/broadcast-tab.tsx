@@ -97,6 +97,40 @@ interface SendResult {
     error?: string;
 }
 
+// ─── Schedule types + localStorage ───────────────────────────────────────────
+interface BroadcastSchedule {
+    id: string;
+    shopId: string;
+    shopName: string;
+    pageId: string;
+    pageName: string;
+    hour: number;
+    messages: string[];
+    filterPurchase: string;
+    filterTimeRange: string;
+    isActive: boolean;
+    createdAt: string;
+    lastFiredAt: string | null;
+    nextFireAt: string | null;
+    note?: string;
+}
+
+const SCHEDULE_KEY = "broadcast_schedules_v2";
+
+function loadSchedules(): BroadcastSchedule[] {
+    if (typeof window === "undefined") return [];
+    try { return JSON.parse(localStorage.getItem(SCHEDULE_KEY) || "[]"); }
+    catch { return []; }
+}
+
+function saveSchedules(list: BroadcastSchedule[]) {
+    try { localStorage.setItem(SCHEDULE_KEY, JSON.stringify(list)); } catch { /* ignore */ }
+}
+
+function calcNextFireAt(hour: number, utcOffset: number): string {
+    return getNextScheduleTime(hour, utcOffset).toISOString();
+}
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 export default function BroadcastTab() {
     const [shops, setShops] = useState<Shop[]>([]);
@@ -138,6 +172,54 @@ export default function BroadcastTab() {
     const [filterActive, setFilterActive] = useState(false);
     const [pageSearch, setPageSearch] = useState("");
     const [isPageDropdownOpen, setIsPageDropdownOpen] = useState(false);
+
+    // ─── Schedule states ──────────────────────────────────────────────────────
+    const [schedules, setSchedules] = useState<BroadcastSchedule[]>([]);
+    const [editingScheduleId, setEditingScheduleId] = useState<string | null>(null);
+    const [editNote, setEditNote] = useState("");
+    const [scheduleToast, setScheduleToast] = useState<string | null>(null);
+    const sendingRef = useRef<Set<string>>(new Set());
+
+    // Load schedules from localStorage on mount
+    useEffect(() => { setSchedules(loadSchedules()); }, []);
+
+    // Auto-fire: check every 30 seconds
+    useEffect(() => {
+        const tick = async () => {
+            const now = Date.now();
+            const list = loadSchedules();
+            for (const s of list) {
+                if (!s.isActive || !s.nextFireAt) continue;
+                if (new Date(s.nextFireAt).getTime() > now) continue;
+                if (sendingRef.current.has(s.id)) continue;
+                sendingRef.current.add(s.id);
+                try {
+                    const url = `/api/broadcast?shopId=${s.shopId}&page=1${s.pageId ? `&pageFilter=${encodeURIComponent(s.pageId)}` : ""}`;
+                    const res = await fetch(url);
+                    const data = await res.json();
+                    if (!data.customers?.length) continue;
+                    let recips: Customer[] = data.customers;
+                    if (s.filterPurchase === "no_purchase") recips = recips.filter((c: Customer) => !c.customerPhone && c.orderCount === 0);
+                    if (s.filterPurchase === "has_purchase") recips = recips.filter((c: Customer) => c.customerPhone || c.orderCount > 0);
+                    const msg = s.messages[0]?.trim();
+                    if (msg && recips.length > 0) {
+                        await fetch("/api/broadcast", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ recipients: recips.map((c: Customer) => ({ psid: c.psid, pageFbId: c.pageFbId, name: c.customerName, conversationId: c.id })), message: msg }),
+                        });
+                    }
+                    const tz = SHOP_TIMEZONES[s.shopName]?.offset ?? 3;
+                    const updated = list.map(x => x.id === s.id ? { ...x, lastFiredAt: new Date().toISOString(), nextFireAt: calcNextFireAt(s.hour, tz) } : x);
+                    saveSchedules(updated);
+                    setSchedules(updated);
+                } catch (err) { console.error("Auto-fire error:", err); }
+                finally { sendingRef.current.delete(s.id); }
+            }
+        };
+        const interval = setInterval(tick, 30000);
+        return () => clearInterval(interval);
+    }, []);
 
     // Load shops
     useEffect(() => {
@@ -293,36 +375,76 @@ export default function BroadcastTab() {
     const shopName = shops.find(s => s.shop_id === selectedShopId)?.name || "";
     const shopTz = SHOP_TIMEZONES[shopName] || { offset: 3, label: "UTC+3", flag: "🌍" };
 
-    // Schedule broadcast
-    const BOX_TO_HOUR: Record<number, number> = { 0: 6, 1: 11, 2: 17, 3: 21 };
-    const HOUR_TO_BOX: Record<number, number> = { 6: 0, 11: 1, 17: 2, 21: 3 };
-
-    const startCountdown = (fireTime: Date, boxIdx: number) => {
-        if (countdownRef.current) clearInterval(countdownRef.current);
-        if (scheduleTimerRef.current) clearTimeout(scheduleTimerRef.current);
-
-        const updateCountdown = () => {
-            const ms = fireTime.getTime() - Date.now();
-            if (ms <= 0) {
-                setCountdown("🚀 Đang gửi...");
-                handleSendBox(boxIdx);
-                clearSchedule();
-                return;
-            }
-            setRemainingMs(ms);
-            setCountdown(formatCountdown(ms));
+    // ─── Schedule actions ────────────────────────────────────────────────────
+    const handleSchedule = (hour: number) => {
+        if (!selectedShopId || !selectedPageId) {
+            setScheduleToast("⚠️ Chọn Shop và Page trước!");
+            setTimeout(() => setScheduleToast(null), 3000);
+            return;
+        }
+        const hasContent = messages.some(m => m.trim()) || mediaArrays.some(a => a.length > 0);
+        if (!hasContent) {
+            setScheduleToast("⚠️ Nhập ít nhất 1 tin nhắn trước!");
+            setTimeout(() => setScheduleToast(null), 3000);
+            return;
+        }
+        const pageName = pages.find(p => p.pageId === selectedPageId)?.name || selectedPageId;
+        const existing = schedules.find(s => s.shopId === selectedShopId && s.pageId === selectedPageId);
+        const tz = shopTz.offset;
+        const entry: BroadcastSchedule = {
+            id: existing?.id || `${selectedShopId}_${selectedPageId}_${Date.now()}`,
+            shopId: selectedShopId,
+            shopName: shopName,
+            pageId: selectedPageId,
+            pageName,
+            hour,
+            messages: messages.map(m => m.trim()),
+            filterPurchase,
+            filterTimeRange,
+            isActive: true,
+            createdAt: existing?.createdAt || new Date().toISOString(),
+            lastFiredAt: existing?.lastFiredAt || null,
+            nextFireAt: calcNextFireAt(hour, tz),
+            note: existing?.note,
         };
-        updateCountdown();
-        countdownRef.current = setInterval(updateCountdown, 1000);
-
-        const delay = fireTime.getTime() - Date.now();
-        scheduleTimerRef.current = setTimeout(() => {
-            handleSendBox(boxIdx);
-            clearSchedule();
-        }, delay);
+        const updated = existing
+            ? schedules.map(s => s.id === entry.id ? entry : s)
+            : [...schedules, entry];
+        saveSchedules(updated);
+        setSchedules(updated);
+        setScheduleToast(`✅ Đã lưu lịch ${SCHEDULE_LABELS[hour]} cho ${pageName}`);
+        setTimeout(() => setScheduleToast(null), 3000);
     };
 
-    const clearSchedule = () => {
+    const toggleScheduleActive = (id: string) => {
+        const updated = schedules.map(s => {
+            if (s.id !== id) return s;
+            const tz = SHOP_TIMEZONES[s.shopName]?.offset ?? 3;
+            return { ...s, isActive: !s.isActive, nextFireAt: !s.isActive ? calcNextFireAt(s.hour, tz) : s.nextFireAt };
+        });
+        saveSchedules(updated);
+        setSchedules(updated);
+    };
+
+    const deleteSchedule = (id: string) => {
+        const updated = schedules.filter(s => s.id !== id);
+        saveSchedules(updated);
+        setSchedules(updated);
+    };
+
+    const startEditNote = (s: BroadcastSchedule) => {
+        setEditingScheduleId(s.id);
+        setEditNote(s.note || "");
+    };
+
+    const saveNote = (id: string) => {
+        const updated = schedules.map(s => s.id === id ? { ...s, note: editNote } : s);
+        saveSchedules(updated);
+        setSchedules(updated);
+        setEditingScheduleId(null);
+    };
+
+    const handleCancelSchedule = () => {
         if (scheduleTimerRef.current) clearTimeout(scheduleTimerRef.current);
         if (countdownRef.current) clearInterval(countdownRef.current);
         setScheduledHour(null);
@@ -332,35 +454,6 @@ export default function BroadcastTab() {
         setRemainingMs(0);
     };
 
-    const handleSchedule = (hour: number) => {
-        clearSchedule();
-        if (scheduledHour === hour) return;
-
-        const boxIdx = HOUR_TO_BOX[hour];
-        const fireTime = getNextScheduleTime(hour, shopTz.offset);
-        setScheduledHour(hour);
-        setScheduleFireTime(fireTime);
-        setIsPaused(false);
-        startCountdown(fireTime, boxIdx);
-    };
-
-    const handlePauseResume = () => {
-        if (isPaused) {
-            const newFireTime = new Date(Date.now() + remainingMs);
-            setScheduleFireTime(newFireTime);
-            setIsPaused(false);
-            const boxIdx = scheduledHour ? HOUR_TO_BOX[scheduledHour] : 0;
-            startCountdown(newFireTime, boxIdx);
-        } else {
-            if (scheduleTimerRef.current) clearTimeout(scheduleTimerRef.current);
-            if (countdownRef.current) clearInterval(countdownRef.current);
-            setIsPaused(true);
-        }
-    };
-
-    const handleCancelSchedule = () => {
-        clearSchedule();
-    };
 
     // Cleanup timers on unmount
     useEffect(() => {
@@ -824,118 +917,141 @@ export default function BroadcastTab() {
                                         <div className={`text-[10px] ${isActive ? "text-amber-100" : "text-slate-400"}`}>
                                             {SCHEDULE_LABELS[hour]}
                                         </div>
-                                        {isActive && (
-                                            <div className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-green-500 border-2 border-white flex items-center justify-center">
-                                                <Timer className="h-2.5 w-2.5 text-white" />
-                                            </div>
-                                        )}
                                     </button>
                                 );
                             })}
                         </div>
-                        {scheduledHour && scheduleFireTime && (
-                            <div className="flex items-center justify-between rounded-md bg-amber-100/50 px-3 py-2">
-                                <div className="flex items-center gap-2">
-                                    <div className={`w-2 h-2 rounded-full ${isPaused ? 'bg-yellow-500' : 'bg-green-500 animate-pulse'}`} />
-                                    <span className="text-xs font-semibold text-amber-800">
-                                        {isPaused ? '⏸ Tạm dừng' : `Sẽ gửi lúc ${scheduledHour}:00 (${shopTz.label})`} → {selectedIds.size} người
-                                    </span>
-                                </div>
-                                <div className="flex items-center gap-2">
-                                    <span className={`text-sm font-mono font-bold ${isPaused ? 'text-yellow-600' : 'text-amber-700'}`}>
-                                        ⏱ {countdown}
-                                    </span>
-                                    <span className="text-[10px] text-amber-500 bg-amber-50 px-1.5 py-0.5 rounded">
-                                        Đoạn {scheduledHour ? HOUR_TO_BOX[scheduledHour] + 1 : '?'}
-                                    </span>
-                                    <button
-                                        onClick={handlePauseResume}
-                                        className={`text-[10px] px-2 py-1 rounded font-semibold transition-colors ${
-                                            isPaused
-                                                ? 'bg-green-100 text-green-700 hover:bg-green-200'
-                                                : 'bg-yellow-100 text-yellow-700 hover:bg-yellow-200'
-                                        }`}
-                                    >
-                                        {isPaused ? '▶ Tiếp tục' : '⏸ Tạm dừng'}
-                                    </button>
-                                    <button
-                                        onClick={handleCancelSchedule}
-                                        className="text-[10px] px-2 py-1 rounded bg-red-100 text-red-600 hover:bg-red-200 font-semibold transition-colors"
-                                    >
-                                        🗑 Huỷ bắn
-                                    </button>
-                                </div>
-                            </div>
-                        )}
-                    </div>
-
-
-                {/* Send Button */}
-                <div className="flex items-center justify-between pt-1">
-                    <p className="text-[11px] text-slate-400">
-                        {selectedPageId && <span className="text-blue-500">Page {selectedPageId}</span>}
-                        {totalMediaCount > 0 && <span className="text-violet-500"> · 📷 {totalMediaCount} media</span>}
-                    </p>
-                    <div className="flex items-center gap-2">
-                        {/* Nút Huỷ - chỉ hiện khi đang gửi */}
-                        {isSending && (
-                            <button
-                                onClick={() => { abortControllerRef.current?.abort(); }}
-                                className="flex items-center gap-1.5 rounded-xl border border-red-300 bg-red-50 px-4 py-2.5 text-sm font-semibold text-red-600 hover:bg-red-100 transition-colors"
-                            >
-                                <XCircle className="h-4 w-4" /> Huỷ gửi
-                            </button>
-                        )}
-                        <motion.button
-                            onClick={() => handleSendBox(0)}
-                            disabled={isSending || selectedIds.size === 0}
-                            whileHover={{ scale: 1.02 }}
-                            whileTap={{ scale: 0.98 }}
-                            className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-violet-600 to-purple-600 px-6 py-2.5 text-sm font-semibold text-white shadow-md shadow-violet-500/20 hover:shadow-violet-500/40 transition-shadow disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                            {isSending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-                            {isSending ? "Đang gửi..." : `Gửi đoạn 1 (${selectedIds.size})`}
-                        </motion.button>
-                    </div>
                 </div>
             </div>
 
-            {/* Results */}
+            {/* ─── Toast notification ──────────────────────────────────────────── */}
             <AnimatePresence>
-                {sendResults && (
+                {scheduleToast && (
                     <motion.div
-                        initial={{ opacity: 0, y: 10 }}
+                        initial={{ opacity: 0, y: -8 }}
                         animate={{ opacity: 1, y: 0 }}
-                        exit={{ opacity: 0, y: 10 }}
-                        className={`rounded-xl border p-4 ${
-                            failCount === 0 && successCount > 0
-                                ? "bg-green-50/50 border-green-200"
-                                : successCount === 0
-                                ? "bg-red-50/50 border-red-200"
-                                : "bg-amber-50/50 border-amber-200"
-                        }`}
+                        exit={{ opacity: 0, y: -8 }}
+                        className="rounded-xl border border-violet-200 bg-violet-50 px-4 py-3 text-sm font-medium text-violet-800 shadow-sm"
                     >
-                        <div className="flex items-center gap-3 mb-2">
-                            {failCount === 0 && successCount > 0 ? (
-                                <CheckCircle2 className="h-5 w-5 text-green-500" />
-                            ) : successCount === 0 ? (
-                                <XCircle className="h-5 w-5 text-red-500" />
-                            ) : (
-                                <AlertTriangle className="h-5 w-5 text-amber-500" />
-                            )}
-                            <p className="text-sm font-semibold text-slate-700">
-                                {successCount > 0 && `Đã gửi: ${successCount} ✅`}
-                                {failCount > 0 && ` · Lỗi: ${failCount} ❌`}
-                            </p>
-                        </div>
-                        {sendResults.filter((r) => !r.success).map((r) => (
-                            <p key={r.psid} className="text-xs text-red-600 mt-1">
-                                ❌ {r.name}: {r.error}
-                            </p>
-                        ))}
+                        {scheduleToast}
                     </motion.div>
                 )}
             </AnimatePresence>
+
+            {/* ─── Schedule List ──────────────────────────────────────────────── */}
+            {schedules.length > 0 && (
+                <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                        <h3 className="text-sm font-bold text-slate-700 flex items-center gap-2">
+                            <CalendarClock className="h-4 w-4 text-violet-500" />
+                            Lịch bắn bot hàng ngày
+                            <span className="text-[11px] font-normal text-slate-400">({schedules.length} lịch)</span>
+                        </h3>
+                        <button
+                            onClick={() => { saveSchedules([]); setSchedules([]); }}
+                            className="text-[10px] text-red-400 hover:text-red-600 transition-colors"
+                        >
+                            Xoá tất cả
+                        </button>
+                    </div>
+
+                    {schedules.map(s => {
+                        const tz = SHOP_TIMEZONES[s.shopName];
+                        const nextMs = s.nextFireAt ? new Date(s.nextFireAt).getTime() - Date.now() : null;
+                        const isEditing = editingScheduleId === s.id;
+                        return (
+                            <div key={s.id} className={`rounded-xl border p-3 space-y-2 transition-colors ${
+                                s.isActive ? "border-violet-200 bg-violet-50/40" : "border-slate-200 bg-slate-50/60"
+                            }`}>
+                                {/* Row 1: Shop/Page + status + actions */}
+                                <div className="flex items-start justify-between gap-2">
+                                    <div className="flex-1 min-w-0">
+                                        <div className="flex items-center gap-1.5 flex-wrap">
+                                            <span className="text-[11px] font-bold text-slate-700">{s.shopName}</span>
+                                            <span className="text-slate-300">·</span>
+                                            <span className="text-[11px] text-slate-600 truncate max-w-[160px]">{s.pageName}</span>
+                                            <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${
+                                                s.isActive ? "bg-green-100 text-green-700" : "bg-slate-200 text-slate-500"
+                                            }`}>
+                                                {s.isActive ? "● Đang chạy" : "⏸ Tạm dừng"}
+                                            </span>
+                                        </div>
+                                        <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                                            <span className="text-[11px] text-violet-600 font-semibold">
+                                                {SCHEDULE_LABELS[s.hour]} · {s.hour}:00 {tz ? `(${tz.flag} ${tz.label})` : ""}
+                                            </span>
+                                            {s.nextFireAt && nextMs !== null && nextMs > 0 && (
+                                                <span className="text-[10px] text-slate-400">
+                                                    ⏳ còn {formatCountdown(nextMs)}
+                                                </span>
+                                            )}
+                                            {s.lastFiredAt && (
+                                                <span className="text-[10px] text-slate-400">
+                                                    · Gửi lần cuối: {new Date(s.lastFiredAt).toLocaleString("vi-VN", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
+                                                </span>
+                                            )}
+                                        </div>
+                                        {s.messages.filter(Boolean).length > 0 && (
+                                            <p className="text-[10px] text-slate-400 truncate mt-0.5">
+                                                💬 {s.messages.filter(Boolean).join(" · ").slice(0, 80)}{s.messages.join("").length > 80 ? "…" : ""}
+                                            </p>
+                                        )}
+                                    </div>
+
+                                    {/* Action buttons */}
+                                    <div className="flex items-center gap-1 flex-shrink-0">
+                                        {/* Pause / Resume */}
+                                        <button
+                                            onClick={() => toggleScheduleActive(s.id)}
+                                            title={s.isActive ? "Tạm dừng" : "Tiếp tục"}
+                                            className={`p-1.5 rounded-lg transition-colors ${
+                                                s.isActive
+                                                    ? "bg-yellow-100 text-yellow-700 hover:bg-yellow-200"
+                                                    : "bg-green-100 text-green-700 hover:bg-green-200"
+                                            }`}
+                                        >
+                                            {s.isActive ? <Timer className="h-3.5 w-3.5" /> : <Clock className="h-3.5 w-3.5" />}
+                                        </button>
+                                        {/* Edit note */}
+                                        <button
+                                            onClick={() => startEditNote(s)}
+                                            title="Ghi chú"
+                                            className="p-1.5 rounded-lg bg-blue-50 text-blue-500 hover:bg-blue-100 transition-colors"
+                                        >
+                                            <MessageSquare className="h-3.5 w-3.5" />
+                                        </button>
+                                        {/* Delete */}
+                                        <button
+                                            onClick={() => deleteSchedule(s.id)}
+                                            title="Xoá"
+                                            className="p-1.5 rounded-lg bg-red-50 text-red-400 hover:bg-red-100 transition-colors"
+                                        >
+                                            <X className="h-3.5 w-3.5" />
+                                        </button>
+                                    </div>
+                                </div>
+
+                                {/* Note row */}
+                                {isEditing && (
+                                    <div className="flex gap-2">
+                                        <input
+                                            value={editNote}
+                                            onChange={e => setEditNote(e.target.value)}
+                                            placeholder="Ghi chú..."
+                                            className="flex-1 text-xs rounded-lg border border-blue-200 px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-300"
+                                        />
+                                        <button onClick={() => saveNote(s.id)} className="text-xs px-2 py-1 rounded-lg bg-blue-500 text-white hover:bg-blue-600">Lưu</button>
+                                        <button onClick={() => setEditingScheduleId(null)} className="text-xs px-2 py-1 rounded-lg bg-slate-200 text-slate-600 hover:bg-slate-300">Huỷ</button>
+                                    </div>
+                                )}
+                                {!isEditing && s.note && (
+                                    <p className="text-[10px] text-slate-400 italic">📝 {s.note}</p>
+                                )}
+                            </div>
+                        );
+                    })}
+                </div>
+            )}
         </div>
     );
 }
