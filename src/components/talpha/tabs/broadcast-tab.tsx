@@ -97,31 +97,48 @@ interface SendResult {
     error?: string;
 }
 
-interface BroadcastHistoryEntry {
+interface BroadcastSchedule {
     id: string;
-    timestamp: string;        // ISO
+    shopId: string;
     shopName: string;
-    pageName: string;
     pageId: string;
-    recipientCount: number;
-    successCount: number;
-    failCount: number;
-    messages: string[];       // [msg1, msg2, msg3, msg4]
-    note?: string;            // optional edit note
+    pageName: string;
+    hour: number;                   // 6 | 11 | 17 | 21
+    messages: string[];             // [msg1, msg2, msg3, msg4]
+    filterPurchase: string;
+    filterTimeRange: string;
+    isActive: boolean;              // true = running, false = paused
+    createdAt: string;
+    lastFiredAt: string | null;
+    nextFireAt: string | null;      // ISO - next scheduled fire time
+    note?: string;
 }
 
-const HISTORY_KEY = "broadcast_history_v1";
+const SCHEDULE_KEY = "broadcast_schedules_v1";
 
-function loadHistory(): BroadcastHistoryEntry[] {
+function loadSchedules(): BroadcastSchedule[] {
     try {
-        const raw = localStorage.getItem(HISTORY_KEY);
+        const raw = localStorage.getItem(SCHEDULE_KEY);
         return raw ? JSON.parse(raw) : [];
     } catch { return []; }
 }
 
-function saveHistory(entries: BroadcastHistoryEntry[]) {
-    try { localStorage.setItem(HISTORY_KEY, JSON.stringify(entries.slice(0, 50))); } catch { /* ignore */ }
+function saveSchedules(entries: BroadcastSchedule[]) {
+    try { localStorage.setItem(SCHEDULE_KEY, JSON.stringify(entries)); } catch { /* ignore */ }
 }
+
+function calcNextFireAt(hour: number, utcOffset: number): string {
+    const fireTime = getNextScheduleTime(hour, utcOffset);
+    return fireTime.toISOString();
+}
+
+// ─── Box color config ─────────────────────────────────────────────────────────
+const BOX_COLORS = [
+    { border: "border-violet-300", bg: "bg-violet-50/40", label: "text-violet-700", inputBorder: "border-violet-200", ring: "focus:ring-violet-300/40" },
+    { border: "border-blue-300", bg: "bg-blue-50/40", label: "text-blue-700", inputBorder: "border-blue-200", ring: "focus:ring-blue-300/40" },
+    { border: "border-emerald-300", bg: "bg-emerald-50/40", label: "text-emerald-700", inputBorder: "border-emerald-200", ring: "focus:ring-emerald-300/40" },
+    { border: "border-orange-300", bg: "bg-orange-50/40", label: "text-orange-700", inputBorder: "border-orange-200", ring: "focus:ring-orange-300/40" },
+];
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 export default function BroadcastTab() {
@@ -142,26 +159,41 @@ export default function BroadcastTab() {
     const [media4, setMedia4] = useState<string[]>([]);
     // Schedule states
     const [scheduledHour, setScheduledHour] = useState<number | null>(null);
-    const [scheduleFireTime, setScheduleFireTime] = useState<Date | null>(null);
-    const [countdown, setCountdown] = useState("");
-    const [isPaused, setIsPaused] = useState(false);
-    const [remainingMs, setRemainingMs] = useState(0);
-    const scheduleTimerRef = useRef<NodeJS.Timeout | null>(null);
-    const countdownRef = useRef<NodeJS.Timeout | null>(null);
     const abortControllerRef = useRef<AbortController | null>(null);
     const [isLoadingShops, setIsLoadingShops] = useState(true);
     const [isLoadingCustomers, setIsLoadingCustomers] = useState(false);
     const [isSending, setIsSending] = useState(false);
-    const [sendResults, setSendResults] = useState<SendResult[] | null>(null);
     const [currentPage, setCurrentPage] = useState(1);
     const [totalCustomers, setTotalCustomers] = useState(0);
     const [totalPages, setTotalPages] = useState(1);
-    const [history, setHistory] = useState<BroadcastHistoryEntry[]>([]);
-    const [editingHistoryId, setEditingHistoryId] = useState<string | null>(null);
+    const [schedules, setSchedules] = useState<BroadcastSchedule[]>([]);
+    const [editingScheduleId, setEditingScheduleId] = useState<string | null>(null);
     const [editNote, setEditNote] = useState("");
+    const [scheduleToast, setScheduleToast] = useState<string | null>(null);
 
-    // Load history from localStorage on mount
-    useEffect(() => { setHistory(loadHistory()); }, []);
+    // Load schedules from localStorage on mount
+    useEffect(() => {
+        setSchedules(loadSchedules());
+    }, []);
+
+    // Recalculate nextFireAt for active schedules that are overdue
+    useEffect(() => {
+        setSchedules(prev => {
+            const now = Date.now();
+            let changed = false;
+            const updated = prev.map(s => {
+                if (s.isActive && s.nextFireAt && new Date(s.nextFireAt).getTime() < now - 86400000) {
+                    changed = true;
+                    const tz = SHOP_TIMEZONES[s.shopName]?.offset ?? 3;
+                    return { ...s, nextFireAt: calcNextFireAt(s.hour, tz) };
+                }
+                return s;
+            });
+            if (changed) saveSchedules(updated);
+            return changed ? updated : prev;
+        });
+    }, []);
+
 
     // Filter states
     const [filterPurchase, setFilterPurchase] = useState<'all' | 'no_purchase' | 'has_purchase'>('all');
@@ -191,7 +223,6 @@ export default function BroadcastTab() {
         setPages([]);
         setSelectedPageId("");
         setCustomers([]);
-        setSendResults(null);
 
         try {
             const res = await fetch(`/api/broadcast?shopId=${shopId}&getPages=true`);
@@ -211,7 +242,6 @@ export default function BroadcastTab() {
         if (!shopId) return;
         setIsLoadingCustomers(true);
         setSelectedIds(new Set());
-        setSendResults(null);
 
         try {
             let url = `/api/broadcast?shopId=${shopId}&page=${page}`;
@@ -251,16 +281,12 @@ export default function BroadcastTab() {
         if (!filterActive) return customers;
         let result = customers;
 
-        // Purchase filter
         if (filterPurchase === 'no_purchase') {
-            // Chưa mua = không có SĐT VÀ orderCount = 0
             result = result.filter(c => !c.customerPhone && c.orderCount === 0);
         } else if (filterPurchase === 'has_purchase') {
-            // Đã mua = có SĐT HOẶC có orderCount > 0
             result = result.filter(c => c.customerPhone || c.orderCount > 0);
         }
 
-        // Time range filter
         if (filterTimeRange !== 'all') {
             const now = Date.now();
             const msMap: Record<string, number> = { '24h': 86400000, '7d': 604800000, '30d': 2592000000, '90d': 7776000000 };
@@ -271,26 +297,23 @@ export default function BroadcastTab() {
             });
         }
 
-        // Gender filter (heuristic by name)
-        if (filterGender !== 'all') {
-            result = result.filter(c => {
-                const name = c.customerName.toLowerCase();
-                if (filterGender === 'female') {
-                    return /^(chị|chi|ms|mrs|miss|cô|co|em gái|nữ|nu|bà|ba|madam)/i.test(name) || /\b(nữ|nu|chị|chi)\b/i.test(name);
-                }
-                return /^(anh|mr|ông|ong|bro|bác|bac)/i.test(name) || /\b(anh|nam)\b/i.test(name);
-            });
-        }
-
         return result;
-    }, [customers, filterPurchase, filterTimeRange, filterGender, filterActive]);
+    }, [customers, filterPurchase, filterTimeRange, filterActive]);
 
-    const toggleSelectAll = () => {
+    const toggleAll = () => {
         if (selectedIds.size === filteredCustomers.length) {
             setSelectedIds(new Set());
         } else {
             setSelectedIds(new Set(filteredCustomers.map((c) => c.id)));
         }
+    };
+
+    const toggleCustomer = (id: string) => {
+        setSelectedIds((prev) => {
+            const next = new Set(prev);
+            next.has(id) ? next.delete(id) : next.add(id);
+            return next;
+        });
     };
 
     // Combine 4 message boxes
@@ -300,8 +323,7 @@ export default function BroadcastTab() {
     const setMessages = [setMsg1, setMsg2, setMsg3, setMsg4];
     const totalMediaCount = media1.length + media2.length + media3.length + media4.length;
 
-    // Handle multi-media upload per box
-    const handleMediaUpload = (boxIdx: number) => (e: React.ChangeEvent<HTMLInputElement>) => {
+    const handleMediaUpload = (e: React.ChangeEvent<HTMLInputElement>, boxIdx: number) => {
         const files = e.target.files;
         if (!files || files.length === 0) return;
         const setter = setMediaArrays[boxIdx];
@@ -313,7 +335,6 @@ export default function BroadcastTab() {
             };
             reader.readAsDataURL(file);
         });
-        // Reset input so same file can be re-selected
         e.target.value = '';
     };
 
@@ -325,149 +346,94 @@ export default function BroadcastTab() {
     const shopName = shops.find(s => s.shop_id === selectedShopId)?.name || "";
     const shopTz = SHOP_TIMEZONES[shopName] || { offset: 3, label: "UTC+3", flag: "🌍" };
 
-    // Schedule broadcast
-    const BOX_TO_HOUR: Record<number, number> = { 0: 6, 1: 11, 2: 17, 3: 21 };
-    const HOUR_TO_BOX: Record<number, number> = { 6: 0, 11: 1, 17: 2, 21: 3 };
-
-    const startCountdown = (fireTime: Date, boxIdx: number) => {
-        if (countdownRef.current) clearInterval(countdownRef.current);
-        if (scheduleTimerRef.current) clearTimeout(scheduleTimerRef.current);
-
-        const updateCountdown = () => {
-            const ms = fireTime.getTime() - Date.now();
-            if (ms <= 0) {
-                setCountdown("🚀 Đang gửi...");
-                handleSendBox(boxIdx);
-                clearSchedule();
-                return;
-            }
-            setRemainingMs(ms);
-            setCountdown(formatCountdown(ms));
-        };
-        updateCountdown();
-        countdownRef.current = setInterval(updateCountdown, 1000);
-
-        const delay = fireTime.getTime() - Date.now();
-        scheduleTimerRef.current = setTimeout(() => {
-            handleSendBox(boxIdx);
-            clearSchedule();
-        }, delay);
-    };
-
-    const clearSchedule = () => {
-        if (scheduleTimerRef.current) clearTimeout(scheduleTimerRef.current);
-        if (countdownRef.current) clearInterval(countdownRef.current);
-        setScheduledHour(null);
-        setScheduleFireTime(null);
-        setCountdown("");
-        setIsPaused(false);
-        setRemainingMs(0);
-    };
-
+    // ─── New: handleSchedule saves a daily recurring schedule ──────────
     const handleSchedule = (hour: number) => {
-        clearSchedule();
-        if (scheduledHour === hour) return;
+        if (!selectedShopId || selectedIds.size === 0) return;
+        const pageName = pages.find(p => p.pageId === selectedPageId)?.name || "Tất cả pages";
 
-        const boxIdx = HOUR_TO_BOX[hour];
-        const fireTime = getNextScheduleTime(hour, shopTz.offset);
-        setScheduledHour(hour);
-        setScheduleFireTime(fireTime);
-        setIsPaused(false);
-        startCountdown(fireTime, boxIdx);
-    };
+        // Check if exact same shop+page+hour already exists → update messages
+        const existing = schedules.find(s => s.shopId === selectedShopId && s.pageId === selectedPageId && s.hour === hour);
+        const nextFireAt = calcNextFireAt(hour, shopTz.offset);
 
-    const handlePauseResume = () => {
-        if (isPaused) {
-            const newFireTime = new Date(Date.now() + remainingMs);
-            setScheduleFireTime(newFireTime);
-            setIsPaused(false);
-            const boxIdx = scheduledHour ? HOUR_TO_BOX[scheduledHour] : 0;
-            startCountdown(newFireTime, boxIdx);
+        if (existing) {
+            const updated = schedules.map(s => s.id === existing.id
+                ? { ...s, messages: [msg1, msg2, msg3, msg4], filterPurchase, filterTimeRange, nextFireAt, isActive: true }
+                : s);
+            setSchedules(updated);
+            saveSchedules(updated);
+            setScheduleToast(`✅ Đã cập nhật lịch ${hour}:00 cho ${pageName}`);
         } else {
-            if (scheduleTimerRef.current) clearTimeout(scheduleTimerRef.current);
-            if (countdownRef.current) clearInterval(countdownRef.current);
-            setIsPaused(true);
+            const entry: BroadcastSchedule = {
+                id: `${Date.now()}`,
+                shopId: selectedShopId,
+                shopName,
+                pageId: selectedPageId,
+                pageName,
+                hour,
+                messages: [msg1, msg2, msg3, msg4],
+                filterPurchase,
+                filterTimeRange,
+                isActive: true,
+                createdAt: new Date().toISOString(),
+                lastFiredAt: null,
+                nextFireAt,
+            };
+            const updated = [entry, ...schedules];
+            setSchedules(updated);
+            saveSchedules(updated);
+            setScheduleToast(`✅ Đã lên lịch bắn ${hour}:00 hàng ngày cho ${pageName}`);
         }
+        setScheduledHour(hour);
+        setTimeout(() => setScheduleToast(null), 3000);
     };
 
-    const handleCancelSchedule = () => {
-        clearSchedule();
-    };
+    // ─── Auto-fire: check every 30s ──────────────────────────────────────
+    const sendForSchedule = useCallback(async (s: BroadcastSchedule) => {
+        const msg = s.messages[0]?.trim();
+        if (!msg) return;
+        try {
+            // Load customers for this schedule
+            const url = `/api/broadcast?shopId=${s.shopId}&page=1${s.pageId ? `&pageFilter=${encodeURIComponent(s.pageId)}` : ''}`;
+            const res = await fetch(url);
+            const data = await res.json();
+            if (!data.customers?.length) return;
 
-    // Cleanup timers on unmount
-    useEffect(() => {
-        return () => {
-            if (scheduleTimerRef.current) clearTimeout(scheduleTimerRef.current);
-            if (countdownRef.current) clearInterval(countdownRef.current);
-        };
+            let recipients = data.customers as Customer[];
+            if (s.filterPurchase === 'no_purchase') recipients = recipients.filter((c: Customer) => !c.customerPhone && c.orderCount === 0);
+            if (s.filterPurchase === 'has_purchase') recipients = recipients.filter((c: Customer) => c.customerPhone || c.orderCount > 0);
+
+            const payload = {
+                recipients: recipients.map((c: Customer) => ({ psid: c.psid, pageFbId: c.pageFbId, name: c.customerName, conversationId: c.id })),
+                message: msg,
+            };
+            await fetch('/api/broadcast', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+
+            // Update lastFiredAt and nextFireAt (+1 day)
+            const tz = SHOP_TIMEZONES[s.shopName]?.offset ?? 3;
+            const nextFire = new Date(getNextScheduleTime(s.hour, tz).getTime() + 86400000);
+            setSchedules(prev => {
+                const updated = prev.map(x => x.id === s.id ? { ...x, lastFiredAt: new Date().toISOString(), nextFireAt: nextFire.toISOString() } : x);
+                saveSchedules(updated);
+                return updated;
+            });
+        } catch (err) { console.error('Auto-fire error:', err); }
     }, []);
 
-    // Send a specific box's message
-    const handleSendBox = async (boxIdx: number) => {
-        const msg = messages[boxIdx]?.trim();
-        const boxMedia = mediaArrays[boxIdx];
-        if (selectedIds.size === 0 || (!msg && boxMedia.length === 0)) return;
-        setIsSending(true);
-        setSendResults(null);
-
-        abortControllerRef.current = new AbortController();
-        const signal = abortControllerRef.current.signal;
-
-        const recipients = customers
-            .filter((c) => selectedIds.has(c.id))
-            .map((c) => ({ psid: c.psid, pageFbId: c.pageFbId, name: c.customerName, conversationId: c.id }));
-
-        try {
-            const payload: Record<string, unknown> = { recipients, message: msg || '' };
-            if (boxMedia.length > 0) {
-                payload.images = boxMedia;
-            }
-
-            const res = await fetch("/api/broadcast", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(payload),
-                signal,
-            });
-            const data = await res.json();
-            if (data.error) {
-                setSendResults([{ psid: "error", name: "System", success: false, error: data.error }]);
-            } else {
-                const results: SendResult[] = data.results || [];
-                setSendResults(results);
-                // ─── Lưu lịch sử ────────────────────────────────────────────
-                const ok = results.filter(r => r.success).length;
-                const fail = results.filter(r => !r.success).length;
-                const pageName = pages.find(p => p.pageId === selectedPageId)?.name || selectedPageId || "Tất cả";
-                const entry: BroadcastHistoryEntry = {
-                    id: `${Date.now()}`,
-                    timestamp: new Date().toISOString(),
-                    shopName,
-                    pageName,
-                    pageId: selectedPageId,
-                    recipientCount: results.length,
-                    successCount: ok,
-                    failCount: fail,
-                    messages: [msg1, msg2, msg3, msg4],
-                };
-                setHistory(prev => {
-                    const updated = [entry, ...prev].slice(0, 50);
-                    saveHistory(updated);
-                    return updated;
+    useEffect(() => {
+        const interval = setInterval(() => {
+            const now = Date.now();
+            setSchedules(prev => {
+                prev.forEach(s => {
+                    if (s.isActive && s.nextFireAt && new Date(s.nextFireAt).getTime() <= now) {
+                        sendForSchedule(s);
+                    }
                 });
-            }
-        } catch (err: unknown) {
-            if (err instanceof Error && err.name === 'AbortError') {
-                setSendResults([{ psid: 'cancelled', name: 'System', success: false, error: '🚫 Đã huỷ gửi' }]);
-            } else {
-                console.error("Broadcast error:", err);
-                setSendResults([{ psid: "error", name: "System", success: false, error: "Network error" }]);
-            }
-        } finally {
-            setIsSending(false);
-            abortControllerRef.current = null;
-        }
-    };
+                return prev;
+            });
+        }, 30000);
+        return () => clearInterval(interval);
+    }, [sendForSchedule]);
+
 
     // Filter pages by search
     const filteredPages = pages.filter((p) => {
@@ -488,9 +454,6 @@ export default function BroadcastTab() {
         } catch { return iso; }
     };
 
-    const successCount = sendResults?.filter((r) => r.success).length || 0;
-    const failCount = sendResults ? sendResults.length - successCount : 0;
-
     return (
         <div className="space-y-4">
             {/* Header */}
@@ -500,7 +463,7 @@ export default function BroadcastTab() {
                         <span className="text-xl">📩</span> Gửi Tin Nhắn Hàng Loạt
                     </h2>
                     <p className="text-xs text-slate-400 mt-0.5">
-                        Lấy khách từ Pancake POS · Gửi tin qua Facebook Messenger
+                        Lấy khách từ Pancake POS · Gửi tin tự động hàng ngày qua Facebook Messenger
                     </p>
                 </div>
                 <div className="flex items-center gap-2 text-[10px] text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5">
@@ -510,7 +473,6 @@ export default function BroadcastTab() {
             </div>
 
             {/* Controls Row */}
-            {/* ─── Single control row: Shop + Page + Filters + Button ─── */}
             <div className="flex items-end gap-2 flex-wrap">
 
                 {/* Shop */}
@@ -556,7 +518,7 @@ export default function BroadcastTab() {
                             <div className="fixed inset-0 z-20" onClick={() => setIsPageDropdownOpen(false)} />
                             <div className="absolute z-30 top-full left-0 right-0 mt-1 rounded-xl border border-slate-200 bg-white shadow-xl max-h-[280px] overflow-y-auto">
                                 <button
-                                    onClick={() => { setSelectedPageId(""); setIsPageDropdownOpen(false); setPageSearch(""); setCustomers([]); setSelectedIds(new Set()); setSendResults(null); setFilterActive(false); }}
+                                    onClick={() => { setSelectedPageId(""); setIsPageDropdownOpen(false); setPageSearch(""); setCustomers([]); setSelectedIds(new Set()); setFilterActive(false); }}
                                     className={`w-full text-left px-3 py-2 text-sm hover:bg-violet-50 transition-colors border-b border-slate-100 ${!selectedPageId ? "bg-violet-50 text-violet-700 font-semibold" : "text-slate-600"}`}
                                 >
                                     Tất cả pages ({pages.length})
@@ -564,42 +526,41 @@ export default function BroadcastTab() {
                                 {filteredPages.map((p) => (
                                     <button
                                         key={p.pageId}
-                                        onClick={() => { setSelectedPageId(p.pageId); setIsPageDropdownOpen(false); setPageSearch(""); setCustomers([]); setSelectedIds(new Set()); setSendResults(null); setFilterActive(false); }}
-                                        className={`w-full text-left px-3 py-2 text-sm hover:bg-violet-50 transition-colors ${selectedPageId === p.pageId ? "bg-violet-50 text-violet-700 font-semibold" : "text-slate-700"}`}
+                                        onClick={() => { setSelectedPageId(p.pageId); setIsPageDropdownOpen(false); setPageSearch(""); setCustomers([]); setSelectedIds(new Set()); setFilterActive(false); }}
+                                        className={`w-full text-left px-3 py-2 text-sm hover:bg-violet-50 transition-colors border-b border-slate-100 last:border-0 ${selectedPageId === p.pageId ? "bg-violet-50" : ""}`}
                                     >
-                                        <span className="block truncate">{p.name}</span>
-                                        <span className="block text-[10px] text-slate-400 font-mono">{p.pageId}</span>
+                                        <div className={`font-medium truncate ${selectedPageId === p.pageId ? "text-violet-700" : "text-slate-700"}`}>{p.name}</div>
+                                        <div className="text-[10px] text-slate-400">{p.pageId}</div>
                                     </button>
                                 ))}
-                                {filteredPages.length === 0 && <div className="px-3 py-4 text-sm text-slate-400 text-center">Không tìm thấy page</div>}
                             </div>
                         </>
                     )}
                 </div>
 
-                {/* Filter: Purchase */}
+                {/* Purchase filter */}
                 <div className="flex-shrink-0">
-                    <label className="text-[10px] font-medium text-slate-500 uppercase tracking-wider mb-1 block">🛒 Trạng thái</label>
+                    <label className="text-[10px] font-medium text-slate-500 uppercase tracking-wider mb-1 block">🛍 Trạng thái</label>
                     <select
                         value={filterPurchase}
-                        onChange={(e) => { setFilterPurchase(e.target.value as typeof filterPurchase); setFilterActive(false); }}
-                        className="rounded-xl border border-slate-200 bg-white px-2.5 py-2.5 text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-violet-300/40 shadow-sm"
+                        onChange={(e) => setFilterPurchase(e.target.value as 'all' | 'no_purchase' | 'has_purchase')}
+                        className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-700 appearance-none focus:outline-none focus:ring-2 focus:ring-violet-400/30 shadow-sm"
                     >
-                        <option value="all">Tất cả KH</option>
-                        <option value="no_purchase">Nhắn tin chưa mua</option>
-                        <option value="has_purchase">Đã mua hàng</option>
+                        <option value="all">Tất cả</option>
+                        <option value="no_purchase">Chưa mua</option>
+                        <option value="has_purchase">Đã mua</option>
                     </select>
                 </div>
 
-                {/* Filter: Time */}
+                {/* Time range filter */}
                 <div className="flex-shrink-0">
                     <label className="text-[10px] font-medium text-slate-500 uppercase tracking-wider mb-1 block">📅 Thời gian</label>
                     <select
                         value={filterTimeRange}
-                        onChange={(e) => { setFilterTimeRange(e.target.value as typeof filterTimeRange); setFilterActive(false); }}
-                        className="rounded-xl border border-slate-200 bg-white px-2.5 py-2.5 text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-violet-300/40 shadow-sm"
+                        onChange={(e) => setFilterTimeRange(e.target.value as 'all' | '24h' | '7d' | '30d' | '90d')}
+                        className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-700 appearance-none focus:outline-none focus:ring-2 focus:ring-violet-400/30 shadow-sm"
                     >
-                        <option value="all">Mọi thời gian</option>
+                        <option value="all">Tất cả</option>
                         <option value="24h">24 giờ qua</option>
                         <option value="7d">7 ngày qua</option>
                         <option value="30d">30 ngày qua</option>
@@ -607,404 +568,207 @@ export default function BroadcastTab() {
                     </select>
                 </div>
 
-                {/* Lọc + Refresh + Count */}
-                <div className="flex items-end gap-2 flex-shrink-0">
-                    <button onClick={() => loadCustomers(selectedShopId, currentPage, selectedPageId)} disabled={!selectedShopId || isLoadingCustomers} className="rounded-xl border border-slate-200 bg-white p-2.5 text-slate-600 hover:bg-slate-50 transition-colors disabled:opacity-50 shadow-sm">
-                        <RefreshCw className={`h-4 w-4 ${isLoadingCustomers ? "animate-spin" : ""}`} />
-                    </button>
-                    <button onClick={async () => { await loadCustomers(selectedShopId, 1, selectedPageId); setFilterActive(true); }} disabled={!selectedShopId || isLoadingCustomers} className="rounded-xl bg-gradient-to-r from-violet-600 to-purple-600 px-4 py-2.5 text-xs font-semibold text-white shadow-sm hover:shadow-md transition-all disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap">
-                        🔍 Lọc data
-                    </button>
-                    {filterActive && (
-                        <button onClick={() => { setFilterActive(false); setFilterPurchase('all'); setFilterTimeRange('all'); setFilterGender('all'); }} className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs text-slate-500 hover:bg-slate-50 transition-colors shadow-sm">
-                            ✕
-                        </button>
-                    )}
-                    <div className="rounded-xl bg-violet-50 border border-violet-200 px-3 py-2.5 text-sm whitespace-nowrap">
-                        <span className="font-semibold text-violet-700">{selectedIds.size}</span>
-                        <span className="text-violet-500">/{filterActive ? filteredCustomers.length : totalCustomers} chọn</span>
-                    </div>
-                </div>
-            </div>
+                {/* Filter Button */}
+                <button
+                    onClick={async () => { await loadCustomers(); setFilterActive(true); }}
+                    disabled={!selectedShopId || isLoadingCustomers}
+                    className="flex-shrink-0 flex items-center gap-2 rounded-xl bg-gradient-to-r from-violet-500 to-purple-600 px-4 py-2.5 text-sm font-semibold text-white shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                    {isLoadingCustomers ? <Loader2 className="h-4 w-4 animate-spin" /> : <Filter className="h-4 w-4" />}
+                    Lọc data
+                </button>
 
-            {/* Customer List */}
-            <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-                {/* Header */}
-                <div className="grid grid-cols-[40px_1fr_120px_80px_100px] gap-2 px-4 py-2.5 bg-slate-50 border-b border-slate-100 text-[10px] font-semibold text-slate-500 uppercase tracking-wider items-center">
-                    <button onClick={toggleSelectAll} className="flex items-center justify-center" title="Chọn tất cả">
-                        {selectedIds.size === filteredCustomers.length && filteredCustomers.length > 0
-                            ? <CheckSquare className="h-4 w-4 text-violet-600" />
-                            : <Square className="h-4 w-4 text-slate-400" />
-                        }
-                    </button>
-                    <span>Khách hàng</span>
-                    <span>SĐT</span>
-                    <span className="text-center">Tin nhắn</span>
-                    <span className="text-right">Ngày</span>
-                </div>
+                {/* Refresh */}
+                <button
+                    onClick={async () => { await loadCustomers(); setFilterActive(true); }}
+                    disabled={!selectedShopId || isLoadingCustomers}
+                    className="flex-shrink-0 rounded-xl border border-slate-200 bg-white p-2.5 hover:bg-slate-50 disabled:opacity-40 shadow-sm"
+                >
+                    <RefreshCw className={`h-4 w-4 text-slate-500 ${isLoadingCustomers ? "animate-spin" : ""}`} />
+                </button>
 
-                {/* Loading */}
-                {isLoadingCustomers && (
-                    <div className="flex items-center justify-center py-12 text-sm text-slate-400">
-                        <Loader2 className="h-5 w-5 animate-spin mr-2" />
-                        Đang tải danh sách khách...
-                    </div>
-                )}
-
-                {/* Empty */}
-                {!isLoadingCustomers && filteredCustomers.length === 0 && selectedShopId && customers.length > 0 && (
-                    <div className="flex flex-col items-center justify-center py-12 text-sm text-slate-400">
-                        <Filter className="h-8 w-8 mb-2 text-slate-300" />
-                        Không có khách phù hợp bộ lọc
-                    </div>
-                )}
-
-                {!isLoadingCustomers && customers.length === 0 && selectedShopId && (
-                    <div className="flex flex-col items-center justify-center py-12 text-sm text-slate-400">
-                        <Users className="h-8 w-8 mb-2 text-slate-300" />
-                        {selectedPageId ? "Không có khách nào từ page này" : "Chọn page để xem khách hàng"}
-                    </div>
-                )}
-
-                {/* No shop */}
-                {!selectedShopId && !isLoadingShops && (
-                    <div className="flex flex-col items-center justify-center py-12 text-sm text-slate-400">
-                        <MessageSquare className="h-8 w-8 mb-2 text-slate-300" />
-                        Chọn shop để xem danh sách pages
-                    </div>
-                )}
-
-                <div className="max-h-[400px] overflow-y-auto divide-y divide-slate-50">
-                    {filteredCustomers.map((c) => {
-                        const isSelected = selectedIds.has(c.id);
-                        const result = sendResults?.find((r) => r.psid === c.psid);
-                        const name = c.customerName || "Không rõ tên";
-                        const phone = c.customerPhone || "";
-                        const msgs = c.messageCount || c.orderCount || 0;
-                        const sub = (c.snippet || c.address || "").replace(/[\r\n]+/g, " ").slice(0, 80);
-
-                        return (
-                            <div
-                                key={c.id}
-                                className={`grid grid-cols-[40px_1fr_120px_80px_100px] gap-2 px-4 py-2.5 items-center cursor-pointer hover:bg-slate-50/80 transition-colors ${
-                                    isSelected ? "bg-violet-50/50" : ""
-                                } ${
-                                    result?.success ? "!bg-green-50/50" : result && !result.success ? "!bg-red-50/50" : ""
-                                }`}
-                                onClick={() => toggleSelect(c.id)}
-                            >
-                                {/* Checkbox */}
-                                <div className="flex items-center justify-center">
-                                    {result ? (
-                                        result.success
-                                            ? <CheckCircle2 className="h-4 w-4 text-green-500" />
-                                            : <XCircle className="h-4 w-4 text-red-500" />
-                                    ) : isSelected
-                                        ? <CheckSquare className="h-4 w-4 text-violet-600" />
-                                        : <Square className="h-4 w-4 text-slate-300" />
-                                    }
-                                </div>
-
-                                {/* Name */}
-                                <div className="min-w-0">
-                                    <div className="flex items-center gap-1.5">
-                                        <p className="text-sm font-medium text-slate-700 truncate">{name}</p>
-                                        {c.conversationLink && (
-                                            <a
-                                                href={c.conversationLink}
-                                                target="_blank"
-                                                rel="noopener noreferrer"
-                                                onClick={(e) => e.stopPropagation()}
-                                                className="text-violet-400 hover:text-violet-600"
-                                                title="Mở Pancake"
-                                            >
-                                                <ExternalLink className="h-3 w-3" />
-                                            </a>
-                                        )}
-                                    </div>
-                                    {sub && (
-                                        <p className="text-[10px] text-slate-400 truncate max-w-[300px]">{sub}</p>
-                                    )}
-                                </div>
-
-                                {/* Phone */}
-                                <div className="flex items-center gap-1 text-xs text-slate-500">
-                                    {phone && <Phone className="h-3 w-3 text-slate-400" />}
-                                    <span className="truncate">{phone || "—"}</span>
-                                </div>
-
-                                {/* Messages */}
-                                <div className="flex items-center justify-center gap-1 text-xs">
-                                    <MessageSquare className="h-3 w-3 text-slate-400" />
-                                    <span className={msgs > 0 ? "text-blue-600 font-semibold" : "text-slate-400"}>
-                                        {msgs}
-                                    </span>
-                                </div>
-
-                                {/* Date */}
-                                <p className="text-[11px] text-slate-400 text-right">{formatTime(c.updatedAt || "")}</p>
-                            </div>
-                        );
-                    })}
-                </div>
-
-                {/* Total count */}
+                {/* Customer count */}
                 {filteredCustomers.length > 0 && (
-                    <div className="flex items-center justify-center px-4 py-2 bg-slate-50 border-t border-slate-100">
-                        <span className="text-xs text-slate-400">
-                            Hiển thị: {filteredCustomers.length} · Tổng: {totalCustomers} khách · Đã chọn: {selectedIds.size}
-                        </span>
+                    <div className="flex-shrink-0 flex items-center gap-1.5 rounded-xl border border-green-200 bg-green-50 px-3 py-2.5">
+                        <Users className="h-4 w-4 text-green-600" />
+                        <span className="text-sm font-semibold text-green-700">{filteredCustomers.length}/{customers.length}</span>
                     </div>
                 )}
             </div>
 
-            {/* Message Composer - 4 Boxes */}
-            <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm space-y-4">
+            {/* Customer list (chỉ hiện khi đã lọc) */}
+            {filterActive && customers.length > 0 && (
+                <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+                    {/* Select all bar */}
+                    <div className="flex items-center gap-3 px-4 py-2.5 border-b border-slate-100 bg-slate-50/60">
+                        <button onClick={toggleAll} className="flex items-center gap-2 text-sm text-slate-600 hover:text-violet-700 transition-colors">
+                            {selectedIds.size === filteredCustomers.length && filteredCustomers.length > 0
+                                ? <CheckSquare className="h-4 w-4 text-violet-600" />
+                                : <Square className="h-4 w-4 text-slate-400" />
+                            }
+                            <span className="font-medium">
+                                {selectedIds.size > 0 ? `Đã chọn ${selectedIds.size}/${filteredCustomers.length}` : `Chọn tất cả (${filteredCustomers.length})`}
+                            </span>
+                        </button>
+                        {totalPages > 1 && (
+                            <div className="flex items-center gap-1 ml-auto">
+                                <button onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1} className="px-2 py-1 rounded-lg text-xs border border-slate-200 hover:bg-slate-50 disabled:opacity-40">‹</button>
+                                <span className="text-xs text-slate-500">{currentPage}/{totalPages}</span>
+                                <button onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} disabled={currentPage === totalPages} className="px-2 py-1 rounded-lg text-xs border border-slate-200 hover:bg-slate-50 disabled:opacity-40">›</button>
+                            </div>
+                        )}
+                    </div>
+                    <div className="divide-y divide-slate-50 max-h-[280px] overflow-y-auto">
+                        {filteredCustomers.map((c) => {
+                            const checked = selectedIds.has(c.id);
+                            return (
+                                <div
+                                    key={c.id}
+                                    onClick={() => toggleCustomer(c.id)}
+                                    className={`flex items-center gap-3 px-4 py-2.5 cursor-pointer hover:bg-slate-50/80 transition-colors ${checked ? "bg-violet-50/40" : ""}`}
+                                >
+                                    {checked ? <CheckSquare className="h-4 w-4 text-violet-500 flex-shrink-0" /> : <Square className="h-4 w-4 text-slate-300 flex-shrink-0" />}
+                                    <div className="flex-1 min-w-0">
+                                        <div className="flex items-center gap-2">
+                                            <span className="text-sm font-medium text-slate-700 truncate">{c.customerName || "—"}</span>
+                                            {c.customerPhone && <Phone className="h-3 w-3 text-green-500 flex-shrink-0" />}
+                                            {c.orderCount > 0 && <ShoppingBag className="h-3 w-3 text-violet-400 flex-shrink-0" />}
+                                        </div>
+                                        <p className="text-[11px] text-slate-400 truncate">{c.snippet || "Không có tin nhắn"}</p>
+                                    </div>
+                                    <a href={c.conversationLink} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} className="flex-shrink-0 text-slate-300 hover:text-violet-500 transition-colors">
+                                        <ExternalLink className="h-3.5 w-3.5" />
+                                    </a>
+                                </div>
+                            );
+                        })}
+                    </div>
+                </div>
+            )}
+
+            {/* Message boxes */}
+            <div className="grid grid-cols-1 gap-3">
+                {BOX_COLORS.map((c, boxIdx) => {
+                    const msg = messages[boxIdx];
+                    const setMsg = setMessages[boxIdx];
+                    const boxMedia = mediaArrays[boxIdx];
+                    const setMedia = setMediaArrays[boxIdx];
+                    const hasContent = msg.trim() || boxMedia.length > 0;
+                    return (
+                        <div key={boxIdx} className={`rounded-xl border-2 ${c.border} ${c.bg} p-3 space-y-2`}>
+                            <div className="flex items-center justify-between">
+                                <label className={`text-[11px] font-semibold ${c.label} flex items-center gap-1`}>
+                                    <MessageSquare className="h-3.5 w-3.5" />
+                                    Đoạn {boxIdx + 1}
+                                    {hasContent && <span className="ml-1 text-[10px] bg-green-100 text-green-600 px-1.5 py-0.5 rounded-full">✓</span>}
+                                </label>
+                                <label className={`flex items-center gap-1.5 cursor-pointer text-[11px] ${c.label} hover:opacity-80 transition-opacity`}>
+                                    <ImagePlus className="h-3.5 w-3.5" />
+                                    Thêm ảnh
+                                    <input type="file" accept="image/*" multiple className="hidden" onChange={(e) => handleMediaUpload(e, boxIdx)} />
+                                </label>
+                            </div>
+                            {boxMedia.length > 0 && (
+                                <div className="flex gap-2 flex-wrap">
+                                    {boxMedia.map((src, mi) => (
+                                        <div key={mi} className="relative w-16 h-16 rounded-lg overflow-hidden border border-slate-200">
+                                            <img src={src} alt="" className="w-full h-full object-cover" />
+                                            <button onClick={() => removeMedia(boxIdx, mi)} className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-red-500 text-white flex items-center justify-center hover:bg-red-600">
+                                                <X className="h-2.5 w-2.5" />
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                            <div className="flex gap-2">
+                                <textarea
+                                    value={msg}
+                                    onChange={(e) => setMsg(e.target.value)}
+                                    placeholder={`Nội dung đoạn ${boxIdx + 1}...`}
+                                    rows={3}
+                                    className={`flex-1 min-w-0 rounded-lg border ${c.inputBorder} bg-white px-3 py-2 text-sm text-slate-700 placeholder:text-slate-300 focus:outline-none focus:ring-2 ${c.ring} resize-none`}
+                                />
+                            </div>
+                        </div>
+                    );
+                })}
+            </div>
+
+            {/* ⏰ Schedule Timer - redesigned as "create schedule" */}
+            <div className="rounded-lg border border-amber-100 bg-gradient-to-r from-amber-50/50 to-orange-50/30 p-3 space-y-2">
                 <div className="flex items-center justify-between">
-                    <label className="text-sm font-bold text-slate-700 flex items-center gap-2">
-                        ✏️ Soạn tin nhắn broadcast
+                    <label className="text-[11px] font-semibold text-amber-700 flex items-center gap-1.5">
+                        <CalendarClock className="h-4 w-4" />
+                        Hẹn giờ bắn bot · {shopTz.flag} {shopName || "—"} ({shopTz.label}, UTC+{shopTz.offset})
                     </label>
-                    <span className="text-[11px] text-slate-400 bg-slate-50 px-2 py-1 rounded-full">
-                        {totalMediaCount} media · {selectedIds.size} người nhận
+                    <span className="text-[10px] text-amber-500 flex items-center gap-1">
+                        <Clock className="h-3 w-3" />
+                        Giờ hiện tại: {getCurrentTimeInTimezone(shopTz.offset)}
                     </span>
                 </div>
-
-                {/* 4 Message Boxes */}
-                <div className="space-y-4">
-                    {[
-                        { idx: 0, label: 'ĐOẠN 1 – Nhắc lại thành phần', color: 'emerald', hour: '6:00', placeholder: 'VD: 🌿 Sản phẩm chứa Niacinamide, Vitamin C...' },
-                        { idx: 1, label: 'ĐOẠN 2 – Nhắc lại feedback KH', color: 'blue', hour: '11:00', placeholder: 'VD: ⭐ Chị Hoa thấy da sáng hẳn sau 2 tuần...' },
-                        { idx: 2, label: 'ĐOẠN 3 – Kêu gọi mua hàng', color: 'violet', hour: '17:00', placeholder: 'VD: 🔥 FLASH SALE giảm 50%! Inbox ngay...' },
-                        { idx: 3, label: 'ĐOẠN 4 – Nội dung khác', color: 'rose', hour: '21:00', placeholder: 'VD: 🌙 Cảm ơn quý khách đã ủng hộ...' },
-                    ].map(({ idx, label, color, hour, placeholder }) => {
-                        const boxMedia = mediaArrays[idx];
-                        const boxMsg = messages[idx];
-                        const setMsg = setMessages[idx];
-                        const colorMap: Record<string, Record<string, string>> = {
-                            emerald: { border: 'border-emerald-100', bg: 'bg-emerald-50/20', badge: 'bg-emerald-500', text: 'text-emerald-600', mediaBorder: 'border-emerald-200', inputBorder: 'border-emerald-100', ring: 'focus:ring-emerald-300/30', uploadBorder: 'border-emerald-200 hover:border-emerald-400', uploadBg: 'hover:bg-emerald-50', uploadText: 'text-emerald-400' },
-                            blue: { border: 'border-blue-100', bg: 'bg-blue-50/20', badge: 'bg-blue-500', text: 'text-blue-600', mediaBorder: 'border-blue-200', inputBorder: 'border-blue-100', ring: 'focus:ring-blue-300/30', uploadBorder: 'border-blue-200 hover:border-blue-400', uploadBg: 'hover:bg-blue-50', uploadText: 'text-blue-400' },
-                            violet: { border: 'border-violet-100', bg: 'bg-violet-50/20', badge: 'bg-violet-500', text: 'text-violet-600', mediaBorder: 'border-violet-200', inputBorder: 'border-violet-100', ring: 'focus:ring-violet-300/30', uploadBorder: 'border-violet-200 hover:border-violet-400', uploadBg: 'hover:bg-violet-50', uploadText: 'text-violet-400' },
-                            rose: { border: 'border-rose-100', bg: 'bg-rose-50/20', badge: 'bg-rose-500', text: 'text-rose-600', mediaBorder: 'border-rose-200', inputBorder: 'border-rose-100', ring: 'focus:ring-rose-300/30', uploadBorder: 'border-rose-200 hover:border-rose-400', uploadBg: 'hover:bg-rose-50', uploadText: 'text-rose-400' },
-                        };
-                        const c = colorMap[color];
+                <div className="grid grid-cols-4 gap-2">
+                    {SCHEDULE_HOURS.map((hour) => {
+                        const isActive = scheduledHour === hour;
+                        const alreadyScheduled = schedules.some(s => s.shopId === selectedShopId && s.pageId === selectedPageId && s.hour === hour && s.isActive);
                         return (
-                            <div key={idx} className={`rounded-lg border ${c.border} ${c.bg} p-3 space-y-2`}>
-                                <div className="flex items-center justify-between">
-                                    <label className={`text-[11px] font-semibold ${c.text} flex items-center gap-1.5`}>
-                                        <span className={`w-5 h-5 rounded-full ${c.badge} text-white flex items-center justify-center text-[10px] font-bold`}>{idx + 1}</span>
-                                        {label}
-                                    </label>
-                                    <span className="text-[10px] text-slate-400 bg-white/70 px-1.5 py-0.5 rounded">⏰ {hour}</span>
+                            <button
+                                key={hour}
+                                onClick={() => handleSchedule(hour)}
+                                disabled={!selectedShopId || selectedIds.size === 0 || messages.every(m => !m?.trim())}
+                                className={`relative rounded-lg px-3 py-2.5 text-center transition-all border-2 disabled:opacity-40 disabled:cursor-not-allowed ${
+                                    isActive || alreadyScheduled
+                                        ? "border-amber-500 bg-amber-500 text-white shadow-md shadow-amber-200"
+                                        : "border-amber-200 bg-white hover:border-amber-400 hover:bg-amber-50 text-slate-700"
+                                }`}
+                            >
+                                <div className="text-lg font-bold">{hour}:00</div>
+                                <div className={`text-[10px] ${isActive || alreadyScheduled ? "text-amber-100" : "text-slate-400"}`}>
+                                    {SCHEDULE_LABELS[hour]}
                                 </div>
-                                {/* Side-by-side: Media Left, Text Right */}
-                                <div className="flex gap-3">
-                                    {/* Media Gallery - Left */}
-                                    <div className="flex-shrink-0" style={{ minWidth: '20%', maxWidth: '33%' }}>
-                                        <div className="flex gap-1.5 flex-wrap">
-                                            {boxMedia.map((src, mi) => (
-                                                <div key={mi} className="relative group flex-shrink-0">
-                                                    {src.startsWith('data:video') ? (
-                                                        <video src={src} className={`w-14 h-14 rounded-lg object-cover border ${c.mediaBorder}`} muted />
-                                                    ) : (
-                                                        <img src={src} alt="" className={`w-14 h-14 rounded-lg object-cover border ${c.mediaBorder}`} />
-                                                    )}
-                                                    <button onClick={() => removeMedia(idx, mi)} className="absolute -top-1 -right-1 bg-red-500 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity shadow"><X className="h-2.5 w-2.5" /></button>
-                                                </div>
-                                            ))}
-                                            <label className={`w-14 h-14 flex-shrink-0 rounded-lg border-2 border-dashed ${c.uploadBorder} bg-white/50 ${c.uploadBg} flex flex-col items-center justify-center cursor-pointer transition-colors gap-0.5`}>
-                                                <ImagePlus className={`h-3.5 w-3.5 ${c.uploadText}`} />
-                                                <span className={`text-[7px] ${c.uploadText}`}>+Ảnh/Video</span>
-                                                <input type="file" accept="image/*,video/*" multiple onChange={handleMediaUpload(idx)} className="hidden" />
-                                            </label>
-                                        </div>
+                                {alreadyScheduled && (
+                                    <div className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-green-500 border-2 border-white flex items-center justify-center">
+                                        <Timer className="h-2.5 w-2.5 text-white" />
                                     </div>
-                                    {/* Text - Right */}
-                                    <textarea
-                                        value={boxMsg}
-                                        onChange={(e) => setMsg(e.target.value)}
-                                        placeholder={placeholder}
-                                        rows={5}
-                                        className={`flex-1 min-w-0 rounded-lg border ${c.inputBorder} bg-white px-3 py-2 text-sm text-slate-700 placeholder:text-slate-300 focus:outline-none focus:ring-2 ${c.ring} resize-none`}
-                                    />
-                                </div>
-                            </div>
+                                )}
+                            </button>
                         );
                     })}
                 </div>
 
-                {/* ⏰ Schedule Timer */}
-                <div className="rounded-lg border border-amber-100 bg-gradient-to-r from-amber-50/50 to-orange-50/30 p-3 space-y-2">
-                        <div className="flex items-center justify-between">
-                            <label className="text-[11px] font-semibold text-amber-700 flex items-center gap-1.5">
-                                <CalendarClock className="h-4 w-4" />
-                                Hẹn giờ bắn bot · {shopTz.flag} {shopName} ({shopTz.label}, UTC+{shopTz.offset})
-                            </label>
-                            <span className="text-[10px] text-amber-500 flex items-center gap-1">
-                                <Clock className="h-3 w-3" />
-                                Giờ hiện tại: {getCurrentTimeInTimezone(shopTz.offset)}
-                            </span>
-                        </div>
-                        <div className="grid grid-cols-5 gap-2">
-                            {/* Bắn ngay - chọn đoạn */}
-                            <div className="relative">
-                                <select
-                                    onChange={(e) => { const v = parseInt(e.target.value); if (!isNaN(v)) handleSendBox(v); e.target.value = ''; }}
-                                    disabled={isSending || selectedIds.size === 0}
-                                    className="w-full rounded-lg px-2 py-2.5 text-center transition-all border-2 border-red-300 bg-gradient-to-b from-red-500 to-orange-500 text-white shadow-md shadow-red-200 hover:shadow-red-300 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed appearance-none text-sm font-bold"
-                                    defaultValue=""
-                                >
-                                    <option value="" disabled>⚡ Bắn ngay</option>
-                                    <option value="0">Đoạn 1</option>
-                                    <option value="1">Đoạn 2</option>
-                                    <option value="2">Đoạn 3</option>
-                                    <option value="3">Đoạn 4</option>
-                                </select>
-                            </div>
-                            {SCHEDULE_HOURS.map((hour) => {
-                                const isActive = scheduledHour === hour;
-                                return (
-                                    <button
-                                        key={hour}
-                                        onClick={() => handleSchedule(hour)}
-                                        disabled={selectedIds.size === 0 || messages.every(m => !m?.trim())}
-                                        className={`relative rounded-lg px-3 py-2.5 text-center transition-all border-2 disabled:opacity-40 disabled:cursor-not-allowed ${
-                                            isActive
-                                                ? "border-amber-500 bg-amber-500 text-white shadow-md shadow-amber-200"
-                                                : "border-amber-200 bg-white hover:border-amber-400 hover:bg-amber-50 text-slate-700"
-                                        }`}
-                                    >
-                                        <div className="text-lg font-bold">{hour}:00</div>
-                                        <div className={`text-[10px] ${isActive ? "text-amber-100" : "text-slate-400"}`}>
-                                            {SCHEDULE_LABELS[hour]}
-                                        </div>
-                                        {isActive && (
-                                            <div className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-green-500 border-2 border-white flex items-center justify-center">
-                                                <Timer className="h-2.5 w-2.5 text-white" />
-                                            </div>
-                                        )}
-                                    </button>
-                                );
-                            })}
-                        </div>
-                        {scheduledHour && scheduleFireTime && (
-                            <div className="flex items-center justify-between rounded-md bg-amber-100/50 px-3 py-2">
-                                <div className="flex items-center gap-2">
-                                    <div className={`w-2 h-2 rounded-full ${isPaused ? 'bg-yellow-500' : 'bg-green-500 animate-pulse'}`} />
-                                    <span className="text-xs font-semibold text-amber-800">
-                                        {isPaused ? '⏸ Tạm dừng' : `Sẽ gửi lúc ${scheduledHour}:00 (${shopTz.label})`} → {selectedIds.size} người
-                                    </span>
-                                </div>
-                                <div className="flex items-center gap-2">
-                                    <span className={`text-sm font-mono font-bold ${isPaused ? 'text-yellow-600' : 'text-amber-700'}`}>
-                                        ⏱ {countdown}
-                                    </span>
-                                    <span className="text-[10px] text-amber-500 bg-amber-50 px-1.5 py-0.5 rounded">
-                                        Đoạn {scheduledHour ? HOUR_TO_BOX[scheduledHour] + 1 : '?'}
-                                    </span>
-                                    <button
-                                        onClick={handlePauseResume}
-                                        className={`text-[10px] px-2 py-1 rounded font-semibold transition-colors ${
-                                            isPaused
-                                                ? 'bg-green-100 text-green-700 hover:bg-green-200'
-                                                : 'bg-yellow-100 text-yellow-700 hover:bg-yellow-200'
-                                        }`}
-                                    >
-                                        {isPaused ? '▶ Tiếp tục' : '⏸ Tạm dừng'}
-                                    </button>
-                                    <button
-                                        onClick={handleCancelSchedule}
-                                        className="text-[10px] px-2 py-1 rounded bg-red-100 text-red-600 hover:bg-red-200 font-semibold transition-colors"
-                                    >
-                                        🗑 Huỷ bắn
-                                    </button>
-                                </div>
-                            </div>
-                        )}
-                    </div>
-
-
-                {/* Send Button */}
-                <div className="flex items-center justify-between pt-1">
-                    <p className="text-[11px] text-slate-400">
-                        {selectedPageId && <span className="text-blue-500">Page {selectedPageId}</span>}
-                        {totalMediaCount > 0 && <span className="text-violet-500"> · 📷 {totalMediaCount} media</span>}
-                    </p>
-                    <div className="flex items-center gap-2">
-                        {/* Nút Huỷ - chỉ hiện khi đang gửi */}
-                        {isSending && (
-                            <button
-                                onClick={() => { abortControllerRef.current?.abort(); }}
-                                className="flex items-center gap-1.5 rounded-xl border border-red-300 bg-red-50 px-4 py-2.5 text-sm font-semibold text-red-600 hover:bg-red-100 transition-colors"
-                            >
-                                <XCircle className="h-4 w-4" /> Huỷ gửi
-                            </button>
-                        )}
-                        <motion.button
-                            onClick={() => handleSendBox(0)}
-                            disabled={isSending || selectedIds.size === 0}
-                            whileHover={{ scale: 1.02 }}
-                            whileTap={{ scale: 0.98 }}
-                            className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-violet-600 to-purple-600 px-6 py-2.5 text-sm font-semibold text-white shadow-md shadow-violet-500/20 hover:shadow-violet-500/40 transition-shadow disabled:opacity-50 disabled:cursor-not-allowed"
+                {/* Toast feedback */}
+                <AnimatePresence>
+                    {scheduleToast && (
+                        <motion.div
+                            initial={{ opacity: 0, y: -4 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            exit={{ opacity: 0, y: -4 }}
+                            className="text-[11px] font-semibold text-green-700 bg-green-50 border border-green-200 rounded-lg px-3 py-2"
                         >
-                            {isSending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-                            {isSending ? "Đang gửi..." : `Gửi đoạn 1 (${selectedIds.size})`}
-                        </motion.button>
-                    </div>
-                </div>
+                            {scheduleToast}
+                        </motion.div>
+                    )}
+                </AnimatePresence>
+
+                <p className="text-[10px] text-amber-500 text-center">
+                    💡 Bấm giờ để lên lịch bắn hàng ngày · Tab phải mở để bắn tự động
+                </p>
             </div>
 
-            {/* Results */}
-            <AnimatePresence>
-                {sendResults && (
-                    <motion.div
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        exit={{ opacity: 0, y: 10 }}
-                        className={`rounded-xl border p-4 ${
-                            failCount === 0 && successCount > 0
-                                ? "bg-green-50/50 border-green-200"
-                                : successCount === 0
-                                ? "bg-red-50/50 border-red-200"
-                                : "bg-amber-50/50 border-amber-200"
-                        }`}
-                    >
-                        <div className="flex items-center gap-3 mb-2">
-                            {failCount === 0 && successCount > 0 ? (
-                                <CheckCircle2 className="h-5 w-5 text-green-500" />
-                            ) : successCount === 0 ? (
-                                <XCircle className="h-5 w-5 text-red-500" />
-                            ) : (
-                                <AlertTriangle className="h-5 w-5 text-amber-500" />
-                            )}
-                            <p className="text-sm font-semibold text-slate-700">
-                                {successCount > 0 && `Đã gửi: ${successCount} ✅`}
-                                {failCount > 0 && ` · Lỗi: ${failCount} ❌`}
-                            </p>
-                        </div>
-                        {sendResults.filter((r) => !r.success).map((r) => (
-                            <p key={r.psid} className="text-xs text-red-600 mt-1">
-                                ❌ {r.name}: {r.error}
-                            </p>
-                        ))}
-                    </motion.div>
-                )}
-            </AnimatePresence>
-
-            {/* ═══ LỊCH SỬ BẮN BOT ═══ */}
+            {/* ═══ DANH SÁCH LỊCH BẮN BOT ═══ */}
             <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
                 <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100 bg-slate-50/60">
                     <div className="flex items-center gap-2">
                         <History className="h-4 w-4 text-violet-500" />
-                        <span className="text-sm font-semibold text-slate-700">Lịch sử bắn bot</span>
-                        {history.length > 0 && (
+                        <span className="text-sm font-semibold text-slate-700">Danh sách lịch bắn</span>
+                        {schedules.length > 0 && (
                             <span className="text-[10px] bg-violet-100 text-violet-600 font-semibold px-2 py-0.5 rounded-full">
-                                {history.length}
+                                {schedules.filter(s => s.isActive).length} đang chạy
                             </span>
                         )}
                     </div>
-                    {history.length > 0 && (
+                    {schedules.length > 0 && (
                         <button
-                            onClick={() => { if (confirm("Xoá toàn bộ lịch sử?")) { setHistory([]); saveHistory([]); } }}
+                            onClick={() => { if (confirm("Xoá tất cả lịch bắn?")) { setSchedules([]); saveSchedules([]); } }}
                             className="flex items-center gap-1 text-[11px] text-red-500 hover:text-red-700 transition-colors"
                         >
                             <Trash2 className="h-3.5 w-3.5" /> Xoá tất cả
@@ -1012,114 +776,124 @@ export default function BroadcastTab() {
                     )}
                 </div>
 
-                {history.length === 0 ? (
+                {schedules.length === 0 ? (
                     <div className="flex flex-col items-center justify-center py-10 text-slate-400">
-                        <History className="h-8 w-8 mb-2 opacity-30" />
-                        <p className="text-sm">Chưa có lịch sử bắn bot</p>
-                        <p className="text-xs mt-1">Sau mỗi lần gửi thành công, lịch sử sẽ xuất hiện ở đây</p>
+                        <CalendarClock className="h-8 w-8 mb-2 opacity-30" />
+                        <p className="text-sm">Chưa có lịch bắn nào</p>
+                        <p className="text-xs mt-1">Chọn giờ bắn phía trên để tạo lịch tự động hàng ngày</p>
                     </div>
                 ) : (
-                    <div className="divide-y divide-slate-100 max-h-[440px] overflow-y-auto">
-                        {history.map((h) => {
-                            const date = new Date(h.timestamp);
-                            const dateStr = date.toLocaleDateString("vi-VN");
-                            const timeStr = date.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" });
-                            const isEditing = editingHistoryId === h.id;
-                            const hasMsg = h.messages.some(m => m?.trim());
+                    <div className="divide-y divide-slate-100 max-h-[500px] overflow-y-auto">
+                        {schedules.map((s) => {
+                            const nextFire = s.nextFireAt ? new Date(s.nextFireAt) : null;
+                            const lastFire = s.lastFiredAt ? new Date(s.lastFiredAt) : null;
+                            const isEditing = editingScheduleId === s.id;
+                            const msUntilFire = nextFire ? nextFire.getTime() - Date.now() : 0;
+                            const hoursLeft = msUntilFire > 0 ? Math.floor(msUntilFire / 3600000) : 0;
+                            const minsLeft = msUntilFire > 0 ? Math.floor((msUntilFire % 3600000) / 60000) : 0;
 
                             return (
-                                <div key={h.id} className="px-4 py-3 hover:bg-slate-50/60 transition-colors">
+                                <div key={s.id} className={`px-4 py-3 hover:bg-slate-50/60 transition-colors ${!s.isActive ? "opacity-60" : ""}`}>
                                     <div className="flex items-start justify-between gap-3">
                                         {/* Left: info */}
                                         <div className="flex-1 min-w-0">
                                             <div className="flex items-center gap-2 flex-wrap">
-                                                <span className="text-[11px] font-mono text-slate-400">{dateStr} {timeStr}</span>
-                                                <span className="text-[11px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 truncate max-w-[180px]">{h.shopName}</span>
-                                                <span className="text-[11px] px-1.5 py-0.5 rounded bg-violet-100 text-violet-700 truncate max-w-[180px]">{h.pageName}</span>
-                                            </div>
-                                            <div className="flex items-center gap-3 mt-1.5">
-                                                <span className="text-[12px] font-semibold text-slate-700">
-                                                    {h.recipientCount} người nhận
-                                                </span>
-                                                {h.successCount > 0 && (
-                                                    <span className="text-[11px] text-green-600">✅ {h.successCount} thành công</span>
-                                                )}
-                                                {h.failCount > 0 && (
-                                                    <span className="text-[11px] text-red-500">❌ {h.failCount} lỗi</span>
-                                                )}
+                                                {/* Status dot */}
+                                                <div className={`w-2 h-2 rounded-full flex-shrink-0 ${s.isActive ? "bg-green-500 animate-pulse" : "bg-slate-300"}`} />
+                                                <span className="text-sm font-semibold text-slate-800">{s.hour}:00</span>
+                                                <span className="text-[11px] text-slate-400">{SCHEDULE_LABELS[s.hour]}</span>
+                                                <span className="text-[11px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 truncate max-w-[120px]">{s.shopName}</span>
+                                                <span className="text-[11px] px-1.5 py-0.5 rounded bg-violet-100 text-violet-700 truncate max-w-[180px]">{s.pageName}</span>
                                             </div>
 
+                                            {/* Next fire */}
+                                            {s.isActive && nextFire && msUntilFire > 0 && (
+                                                <div className="flex items-center gap-2 mt-1.5">
+                                                    <Timer className="h-3.5 w-3.5 text-amber-500" />
+                                                    <span className="text-[11px] text-amber-700 font-semibold">
+                                                        Bắn sau: {hoursLeft}h {minsLeft}m
+                                                    </span>
+                                                    <span className="text-[10px] text-slate-400">
+                                                        ({nextFire.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })} ngày {nextFire.toLocaleDateString("vi-VN")})
+                                                    </span>
+                                                </div>
+                                            )}
+                                            {lastFire && (
+                                                <p className="text-[10px] text-slate-400 mt-0.5">
+                                                    Lần cuối: {lastFire.toLocaleString("vi-VN")}
+                                                </p>
+                                            )}
+
                                             {/* Messages preview */}
-                                            {hasMsg && (
+                                            {s.messages.some(m => m?.trim()) && (
                                                 <div className="mt-1.5 flex flex-wrap gap-1">
-                                                    {h.messages.map((m, i) => m?.trim() ? (
+                                                    {s.messages.map((m, i) => m?.trim() ? (
                                                         <span key={i} className="text-[10px] bg-slate-100 text-slate-500 px-2 py-0.5 rounded max-w-[200px] truncate">
-                                                            Đoạn {i + 1}: {m.trim().slice(0, 40)}{m.trim().length > 40 ? "..." : ""}
+                                                            Đoạn {i + 1}: {m.trim().slice(0, 35)}{m.trim().length > 35 ? "..." : ""}
                                                         </span>
                                                     ) : null)}
                                                 </div>
                                             )}
 
-                                            {/* Note (editable) */}
+                                            {/* Edit note */}
                                             {isEditing ? (
                                                 <div className="mt-2 flex gap-2">
                                                     <input
                                                         type="text"
                                                         value={editNote}
                                                         onChange={e => setEditNote(e.target.value)}
-                                                        placeholder="Ghi chú cho lần bắn này..."
+                                                        placeholder="Ghi chú..."
                                                         className="flex-1 text-xs border border-violet-300 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-violet-200"
                                                         autoFocus
                                                         onKeyDown={e => {
                                                             if (e.key === "Enter") {
-                                                                const updated = history.map(x => x.id === h.id ? { ...x, note: editNote } : x);
-                                                                setHistory(updated); saveHistory(updated); setEditingHistoryId(null);
+                                                                const updated = schedules.map(x => x.id === s.id ? { ...x, note: editNote } : x);
+                                                                setSchedules(updated); saveSchedules(updated); setEditingScheduleId(null);
                                                             }
-                                                            if (e.key === "Escape") setEditingHistoryId(null);
+                                                            if (e.key === "Escape") setEditingScheduleId(null);
                                                         }}
                                                     />
-                                                    <button
-                                                        onClick={() => {
-                                                            const updated = history.map(x => x.id === h.id ? { ...x, note: editNote } : x);
-                                                            setHistory(updated); saveHistory(updated); setEditingHistoryId(null);
-                                                        }}
-                                                        className="text-[11px] bg-violet-500 text-white px-3 py-1 rounded-lg hover:bg-violet-600"
-                                                    >Lưu</button>
-                                                    <button onClick={() => setEditingHistoryId(null)} className="text-[11px] text-slate-500 px-2 py-1 rounded-lg hover:bg-slate-100">Huỷ</button>
+                                                    <button onClick={() => { const updated = schedules.map(x => x.id === s.id ? { ...x, note: editNote } : x); setSchedules(updated); saveSchedules(updated); setEditingScheduleId(null); }} className="text-[11px] bg-violet-500 text-white px-3 py-1 rounded-lg hover:bg-violet-600">Lưu</button>
+                                                    <button onClick={() => setEditingScheduleId(null)} className="text-[11px] text-slate-500 px-2 py-1 rounded-lg hover:bg-slate-100">Huỷ</button>
                                                 </div>
-                                            ) : h.note ? (
-                                                <p className="text-[11px] text-slate-500 mt-1 italic">📝 {h.note}</p>
+                                            ) : s.note ? (
+                                                <p className="text-[11px] text-slate-500 mt-0.5 italic">📝 {s.note}</p>
                                             ) : null}
                                         </div>
 
                                         {/* Right: actions */}
-                                        <div className="flex items-center gap-1.5 flex-shrink-0">
-                                            {/* Dùng lại - load messages back */}
+                                        <div className="flex items-center gap-1 flex-shrink-0">
+                                            {/* Tạm dừng / Tiếp tục */}
                                             <button
                                                 onClick={() => {
-                                                    const [m1, m2, m3, m4] = h.messages;
-                                                    setMsg1(m1 || ""); setMsg2(m2 || ""); setMsg3(m3 || ""); setMsg4(m4 || "");
+                                                    const updated = schedules.map(x => x.id === s.id ? { ...x, isActive: !x.isActive } : x);
+                                                    setSchedules(updated); saveSchedules(updated);
                                                 }}
-                                                title="Dùng lại tin nhắn này"
-                                                className="flex items-center gap-1 text-[11px] text-violet-600 border border-violet-200 bg-violet-50 hover:bg-violet-100 px-2 py-1.5 rounded-lg transition-colors"
+                                                title={s.isActive ? "Tạm dừng" : "Tiếp tục"}
+                                                className={`flex items-center gap-1 text-[11px] px-2 py-1.5 rounded-lg border transition-colors ${s.isActive ? "border-yellow-200 bg-yellow-50 text-yellow-700 hover:bg-yellow-100" : "border-green-200 bg-green-50 text-green-700 hover:bg-green-100"}`}
                                             >
-                                                <RotateCcw className="h-3 w-3" /> Dùng lại
+                                                {s.isActive ? <><span>⏸</span> Dừng</> : <><span>▶</span> Chạy</>}
                                             </button>
-                                            {/* Ghi chú */}
+                                            {/* Chỉnh sửa ghi chú */}
                                             <button
-                                                onClick={() => { setEditingHistoryId(h.id); setEditNote(h.note || ""); }}
-                                                title="Thêm ghi chú"
+                                                onClick={() => { setEditingScheduleId(s.id); setEditNote(s.note || ""); }}
+                                                title="Chỉnh sửa ghi chú"
                                                 className="p-1.5 rounded-lg text-slate-400 hover:text-violet-600 hover:bg-violet-50 transition-colors"
                                             >
                                                 <Edit2 className="h-3.5 w-3.5" />
                                             </button>
+                                            {/* Dùng lại tin nhắn */}
+                                            <button
+                                                onClick={() => { const [m1, m2, m3, m4] = s.messages; setMsg1(m1 || ""); setMsg2(m2 || ""); setMsg3(m3 || ""); setMsg4(m4 || ""); }}
+                                                title="Load lại tin nhắn"
+                                                className="p-1.5 rounded-lg text-slate-400 hover:text-violet-600 hover:bg-violet-50 transition-colors"
+                                            >
+                                                <RotateCcw className="h-3.5 w-3.5" />
+                                            </button>
                                             {/* Xoá */}
                                             <button
-                                                onClick={() => {
-                                                    const updated = history.filter(x => x.id !== h.id);
-                                                    setHistory(updated); saveHistory(updated);
-                                                }}
-                                                title="Xoá lịch sử này"
+                                                onClick={() => { const updated = schedules.filter(x => x.id !== s.id); setSchedules(updated); saveSchedules(updated); }}
+                                                title="Xoá lịch này"
                                                 className="p-1.5 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 transition-colors"
                                             >
                                                 <Trash2 className="h-3.5 w-3.5" />
@@ -1135,3 +909,4 @@ export default function BroadcastTab() {
         </div>
     );
 }
+
