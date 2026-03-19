@@ -220,9 +220,11 @@ export default function BroadcastTab() {
 
         // Purchase filter
         if (filterPurchase === 'no_purchase') {
-            result = result.filter(c => c.messageCount > 0 && c.orderCount === 0);
+            // Chưa mua = không có SĐT VÀ orderCount = 0
+            result = result.filter(c => !c.customerPhone && c.orderCount === 0);
         } else if (filterPurchase === 'has_purchase') {
-            result = result.filter(c => c.orderCount > 0);
+            // Đã mua = có SĐT HOẶC có orderCount > 0
+            result = result.filter(c => c.customerPhone || c.orderCount > 0);
         }
 
         // Time range filter
