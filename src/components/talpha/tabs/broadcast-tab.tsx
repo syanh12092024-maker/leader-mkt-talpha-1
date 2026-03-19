@@ -6,7 +6,7 @@ import {
     Send, Users, RefreshCw, CheckCircle2, XCircle, Loader2,
     ChevronDown, Search, CheckSquare, Square, MessageSquare,
     AlertTriangle, ShoppingBag, Phone, ExternalLink, ImagePlus, X,
-    Clock, Timer, CalendarClock, Filter
+    Clock, Timer, CalendarClock, Filter, History, RotateCcw, Trash2, Edit2
 } from "lucide-react";
 
 // ─── Timezone mapping ─────────────────────────────────────────────────────────
@@ -97,6 +97,32 @@ interface SendResult {
     error?: string;
 }
 
+interface BroadcastHistoryEntry {
+    id: string;
+    timestamp: string;        // ISO
+    shopName: string;
+    pageName: string;
+    pageId: string;
+    recipientCount: number;
+    successCount: number;
+    failCount: number;
+    messages: string[];       // [msg1, msg2, msg3, msg4]
+    note?: string;            // optional edit note
+}
+
+const HISTORY_KEY = "broadcast_history_v1";
+
+function loadHistory(): BroadcastHistoryEntry[] {
+    try {
+        const raw = localStorage.getItem(HISTORY_KEY);
+        return raw ? JSON.parse(raw) : [];
+    } catch { return []; }
+}
+
+function saveHistory(entries: BroadcastHistoryEntry[]) {
+    try { localStorage.setItem(HISTORY_KEY, JSON.stringify(entries.slice(0, 50))); } catch { /* ignore */ }
+}
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 export default function BroadcastTab() {
     const [shops, setShops] = useState<Shop[]>([]);
@@ -130,6 +156,12 @@ export default function BroadcastTab() {
     const [currentPage, setCurrentPage] = useState(1);
     const [totalCustomers, setTotalCustomers] = useState(0);
     const [totalPages, setTotalPages] = useState(1);
+    const [history, setHistory] = useState<BroadcastHistoryEntry[]>([]);
+    const [editingHistoryId, setEditingHistoryId] = useState<string | null>(null);
+    const [editNote, setEditNote] = useState("");
+
+    // Load history from localStorage on mount
+    useEffect(() => { setHistory(loadHistory()); }, []);
 
     // Filter states
     const [filterPurchase, setFilterPurchase] = useState<'all' | 'no_purchase' | 'has_purchase'>('all');
@@ -401,7 +433,28 @@ export default function BroadcastTab() {
             if (data.error) {
                 setSendResults([{ psid: "error", name: "System", success: false, error: data.error }]);
             } else {
-                setSendResults(data.results || []);
+                const results: SendResult[] = data.results || [];
+                setSendResults(results);
+                // ─── Lưu lịch sử ────────────────────────────────────────────
+                const ok = results.filter(r => r.success).length;
+                const fail = results.filter(r => !r.success).length;
+                const pageName = pages.find(p => p.pageId === selectedPageId)?.name || selectedPageId || "Tất cả";
+                const entry: BroadcastHistoryEntry = {
+                    id: `${Date.now()}`,
+                    timestamp: new Date().toISOString(),
+                    shopName,
+                    pageName,
+                    pageId: selectedPageId,
+                    recipientCount: results.length,
+                    successCount: ok,
+                    failCount: fail,
+                    messages: [msg1, msg2, msg3, msg4],
+                };
+                setHistory(prev => {
+                    const updated = [entry, ...prev].slice(0, 50);
+                    saveHistory(updated);
+                    return updated;
+                });
             }
         } catch (err: unknown) {
             if (err instanceof Error && err.name === 'AbortError') {
@@ -936,6 +989,149 @@ export default function BroadcastTab() {
                     </motion.div>
                 )}
             </AnimatePresence>
+
+            {/* ═══ LỊCH SỬ BẮN BOT ═══ */}
+            <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+                <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100 bg-slate-50/60">
+                    <div className="flex items-center gap-2">
+                        <History className="h-4 w-4 text-violet-500" />
+                        <span className="text-sm font-semibold text-slate-700">Lịch sử bắn bot</span>
+                        {history.length > 0 && (
+                            <span className="text-[10px] bg-violet-100 text-violet-600 font-semibold px-2 py-0.5 rounded-full">
+                                {history.length}
+                            </span>
+                        )}
+                    </div>
+                    {history.length > 0 && (
+                        <button
+                            onClick={() => { if (confirm("Xoá toàn bộ lịch sử?")) { setHistory([]); saveHistory([]); } }}
+                            className="flex items-center gap-1 text-[11px] text-red-500 hover:text-red-700 transition-colors"
+                        >
+                            <Trash2 className="h-3.5 w-3.5" /> Xoá tất cả
+                        </button>
+                    )}
+                </div>
+
+                {history.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center py-10 text-slate-400">
+                        <History className="h-8 w-8 mb-2 opacity-30" />
+                        <p className="text-sm">Chưa có lịch sử bắn bot</p>
+                        <p className="text-xs mt-1">Sau mỗi lần gửi thành công, lịch sử sẽ xuất hiện ở đây</p>
+                    </div>
+                ) : (
+                    <div className="divide-y divide-slate-100 max-h-[440px] overflow-y-auto">
+                        {history.map((h) => {
+                            const date = new Date(h.timestamp);
+                            const dateStr = date.toLocaleDateString("vi-VN");
+                            const timeStr = date.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" });
+                            const isEditing = editingHistoryId === h.id;
+                            const hasMsg = h.messages.some(m => m?.trim());
+
+                            return (
+                                <div key={h.id} className="px-4 py-3 hover:bg-slate-50/60 transition-colors">
+                                    <div className="flex items-start justify-between gap-3">
+                                        {/* Left: info */}
+                                        <div className="flex-1 min-w-0">
+                                            <div className="flex items-center gap-2 flex-wrap">
+                                                <span className="text-[11px] font-mono text-slate-400">{dateStr} {timeStr}</span>
+                                                <span className="text-[11px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 truncate max-w-[180px]">{h.shopName}</span>
+                                                <span className="text-[11px] px-1.5 py-0.5 rounded bg-violet-100 text-violet-700 truncate max-w-[180px]">{h.pageName}</span>
+                                            </div>
+                                            <div className="flex items-center gap-3 mt-1.5">
+                                                <span className="text-[12px] font-semibold text-slate-700">
+                                                    {h.recipientCount} người nhận
+                                                </span>
+                                                {h.successCount > 0 && (
+                                                    <span className="text-[11px] text-green-600">✅ {h.successCount} thành công</span>
+                                                )}
+                                                {h.failCount > 0 && (
+                                                    <span className="text-[11px] text-red-500">❌ {h.failCount} lỗi</span>
+                                                )}
+                                            </div>
+
+                                            {/* Messages preview */}
+                                            {hasMsg && (
+                                                <div className="mt-1.5 flex flex-wrap gap-1">
+                                                    {h.messages.map((m, i) => m?.trim() ? (
+                                                        <span key={i} className="text-[10px] bg-slate-100 text-slate-500 px-2 py-0.5 rounded max-w-[200px] truncate">
+                                                            Đoạn {i + 1}: {m.trim().slice(0, 40)}{m.trim().length > 40 ? "..." : ""}
+                                                        </span>
+                                                    ) : null)}
+                                                </div>
+                                            )}
+
+                                            {/* Note (editable) */}
+                                            {isEditing ? (
+                                                <div className="mt-2 flex gap-2">
+                                                    <input
+                                                        type="text"
+                                                        value={editNote}
+                                                        onChange={e => setEditNote(e.target.value)}
+                                                        placeholder="Ghi chú cho lần bắn này..."
+                                                        className="flex-1 text-xs border border-violet-300 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-violet-200"
+                                                        autoFocus
+                                                        onKeyDown={e => {
+                                                            if (e.key === "Enter") {
+                                                                const updated = history.map(x => x.id === h.id ? { ...x, note: editNote } : x);
+                                                                setHistory(updated); saveHistory(updated); setEditingHistoryId(null);
+                                                            }
+                                                            if (e.key === "Escape") setEditingHistoryId(null);
+                                                        }}
+                                                    />
+                                                    <button
+                                                        onClick={() => {
+                                                            const updated = history.map(x => x.id === h.id ? { ...x, note: editNote } : x);
+                                                            setHistory(updated); saveHistory(updated); setEditingHistoryId(null);
+                                                        }}
+                                                        className="text-[11px] bg-violet-500 text-white px-3 py-1 rounded-lg hover:bg-violet-600"
+                                                    >Lưu</button>
+                                                    <button onClick={() => setEditingHistoryId(null)} className="text-[11px] text-slate-500 px-2 py-1 rounded-lg hover:bg-slate-100">Huỷ</button>
+                                                </div>
+                                            ) : h.note ? (
+                                                <p className="text-[11px] text-slate-500 mt-1 italic">📝 {h.note}</p>
+                                            ) : null}
+                                        </div>
+
+                                        {/* Right: actions */}
+                                        <div className="flex items-center gap-1.5 flex-shrink-0">
+                                            {/* Dùng lại - load messages back */}
+                                            <button
+                                                onClick={() => {
+                                                    const [m1, m2, m3, m4] = h.messages;
+                                                    setMsg1(m1 || ""); setMsg2(m2 || ""); setMsg3(m3 || ""); setMsg4(m4 || "");
+                                                }}
+                                                title="Dùng lại tin nhắn này"
+                                                className="flex items-center gap-1 text-[11px] text-violet-600 border border-violet-200 bg-violet-50 hover:bg-violet-100 px-2 py-1.5 rounded-lg transition-colors"
+                                            >
+                                                <RotateCcw className="h-3 w-3" /> Dùng lại
+                                            </button>
+                                            {/* Ghi chú */}
+                                            <button
+                                                onClick={() => { setEditingHistoryId(h.id); setEditNote(h.note || ""); }}
+                                                title="Thêm ghi chú"
+                                                className="p-1.5 rounded-lg text-slate-400 hover:text-violet-600 hover:bg-violet-50 transition-colors"
+                                            >
+                                                <Edit2 className="h-3.5 w-3.5" />
+                                            </button>
+                                            {/* Xoá */}
+                                            <button
+                                                onClick={() => {
+                                                    const updated = history.filter(x => x.id !== h.id);
+                                                    setHistory(updated); saveHistory(updated);
+                                                }}
+                                                title="Xoá lịch sử này"
+                                                className="p-1.5 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 transition-colors"
+                                            >
+                                                <Trash2 className="h-3.5 w-3.5" />
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
+                )}
+            </div>
         </div>
     );
 }
