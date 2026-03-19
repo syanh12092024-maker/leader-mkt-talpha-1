@@ -17,7 +17,7 @@ interface Props { dateRange?: { from: Date; to: Date }; projectId?: string }
 
 function marketVerdict(rev: number, total: number): { label: string; cls: string } {
     const share = total > 0 ? (rev / total) * 100 : 0;
-    if (share >= 30) return { label: "🔥 Chủ lực", cls: "text-emerald-400" };
+    if (share >= 30) return { label: "🔥 Chủ lực", cls: "text-blue-400" };
     if (share >= 15) return { label: "✅ Mạnh", cls: "text-blue-400" };
     if (share >= 5) return { label: "📈 Tiềm năng", cls: "text-amber-400" };
     return { label: "🌱 Mới", cls: "text-slate-400" };
@@ -109,7 +109,7 @@ export default function TALPHAMarketIntelTab({ dateRange }: Props) {
                                 <MapPin className="h-4 w-4 text-amber-400" />
                                 <span className="text-sm font-semibold text-foreground">{m.shop_name}</span>
                             </div>
-                            <div className="text-xl font-bold text-emerald-400">{formatVNDCompact(m.revenue)}</div>
+                            <div className="text-xl font-bold text-blue-400">{formatVNDCompact(m.revenue)}</div>
                             <div className="text-xs text-slate-400 mt-1">{m.orders} đơn • {m.customers} KH</div>
                             <div className={`text-xs mt-1 ${verdict.cls}`}>{verdict.label}</div>
                         </div>
@@ -185,8 +185,8 @@ export default function TALPHAMarketIntelTab({ dateRange }: Props) {
                                 <tr key={i} className="border-b border-slate-700/50 hover:bg-slate-700/30">
                                     <td className="py-2 pl-2 text-foreground font-medium">{m.shop_name}</td>
                                     <td className="py-2 text-right text-blue-400 font-mono">{m.orders}</td>
-                                    <td className="py-2 text-right text-purple-400 font-mono">{m.customers}</td>
-                                    <td className="py-2 text-right text-emerald-400 font-mono">{formatVNDCompact(m.revenue)}</td>
+                                    <td className="py-2 text-right text-blue-500 font-mono">{m.customers}</td>
+                                    <td className="py-2 text-right text-blue-400 font-mono">{formatVNDCompact(m.revenue)}</td>
                                     <td className="py-2 text-right text-cyan-400 font-mono">{formatVNDCompact(m.avg_order)}</td>
                                     <td className="py-2 text-right text-foreground font-mono">{share.toFixed(1)}%</td>
                                     <td className={`py-2 text-right pr-2 text-xs ${verdict.cls}`}>{verdict.label}</td>

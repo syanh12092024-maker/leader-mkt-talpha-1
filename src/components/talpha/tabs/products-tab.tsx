@@ -141,8 +141,8 @@ export default function TALPHAProductsTab({ dateRange }: Props) {
                                     <td className="py-2 text-foreground font-medium max-w-[200px] truncate">{p.product_name}</td>
                                     <td className="py-2 text-xs text-slate-400">{Array.from(p.shops).join(", ")}</td>
                                     <td className="py-2 text-right text-blue-400 font-mono">{p.quantity}</td>
-                                    <td className="py-2 text-right text-purple-400 font-mono">{p.orders}</td>
-                                    <td className="py-2 text-right pr-2 text-emerald-400 font-mono">{formatVNDCompact(p.revenue)}</td>
+                                    <td className="py-2 text-right text-blue-500 font-mono">{p.orders}</td>
+                                    <td className="py-2 text-right pr-2 text-blue-400 font-mono">{formatVNDCompact(p.revenue)}</td>
                                 </tr>
                             ))}
                         </tbody>

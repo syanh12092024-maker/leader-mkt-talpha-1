@@ -2,7 +2,7 @@ import { BigQuery } from "@google-cloud/bigquery";
 import path from "path";
 
 // Updated path to reference the shared config safely
-const keyFilename = path.resolve(process.cwd(), "../Agentic-AI-Levelup/config/bigquery-key.json");
+const keyFilename = path.resolve(process.cwd(), "config/bigquery-key.json");
 const projectId = "levelup-465304";
 
 export const bigquery = new BigQuery({

@@ -81,7 +81,7 @@ export interface SendMessageRequest {
             };
         };
     };
-    tag?: "CONFIRMED_EVENT_UPDATE" | "POST_PURCHASE_UPDATE" | "ACCOUNT_UPDATE";
+    tag?: "CONFIRMED_EVENT_UPDATE" | "POST_PURCHASE_UPDATE" | "ACCOUNT_UPDATE" | "HUMAN_AGENT";
 }
 
 export interface SendMessageResponse {

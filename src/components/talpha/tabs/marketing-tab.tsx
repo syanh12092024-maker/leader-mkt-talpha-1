@@ -129,7 +129,7 @@ export default function TALPHAMarketingTab({ dateRange }: Props) {
                 {[
                     { label: "Chi phí Ads (VND)", value: formatVNDCompact(summary.spend), icon: DollarSign, color: "text-amber-400" },
                     { label: "Messages", value: summary.messages.toLocaleString("vi-VN"), icon: MessageCircle, color: "text-blue-400" },
-                    { label: "Impressions", value: summary.impressions.toLocaleString("vi-VN"), icon: Users, color: "text-purple-400" },
+                    { label: "Impressions", value: summary.impressions.toLocaleString("vi-VN"), icon: Users, color: "text-blue-500" },
                     { label: "CPM (VND)", value: formatVNDCompact(summary.cpm), icon: TrendingUp, color: "text-cyan-400" },
                 ].map((kpi, i) => (
                     <div key={i} className="bg-slate-800/50 border border-slate-700 rounded-xl p-4">
@@ -161,7 +161,7 @@ export default function TALPHAMarketingTab({ dateRange }: Props) {
                                         <td className="py-2 pl-2 text-slate-500">{i + 1}</td>
                                         <td className="py-2 text-foreground font-medium">{m.marketer}</td>
                                         <td className="py-2 text-right text-blue-400 font-mono">{m.orders}</td>
-                                        <td className="py-2 text-right pr-2 text-emerald-400 font-mono">{formatVNDCompact(m.revenue)}</td>
+                                        <td className="py-2 text-right pr-2 text-blue-400 font-mono">{formatVNDCompact(m.revenue)}</td>
                                     </tr>
                                 ))}
                             </tbody>

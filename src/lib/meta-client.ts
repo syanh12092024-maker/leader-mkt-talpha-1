@@ -156,7 +156,8 @@ export async function getMessages(
 export async function sendMessage(
     recipientId: string,
     text: string,
-    messagingType: SendMessageRequest["messaging_type"] = "RESPONSE"
+    messagingType: SendMessageRequest["messaging_type"] = "RESPONSE",
+    tag?: SendMessageRequest["tag"]
 ): Promise<SendMessageResponse> {
     const pageId = getPageId();
 
@@ -165,6 +166,10 @@ export async function sendMessage(
         messaging_type: messagingType,
         message: { text },
     };
+
+    if (tag) {
+        payload.tag = tag;
+    }
 
     return graphRequest<SendMessageResponse>(`/${pageId}/messages`, {
         method: "POST",

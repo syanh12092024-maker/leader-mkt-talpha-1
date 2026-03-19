@@ -1,0 +1,437 @@
+import { NextRequest, NextResponse } from "next/server";
+import fs from "fs";
+import path from "path";
+import yaml from "js-yaml";
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+interface ShopConfig {
+    name: string;
+    api_key: string;
+    shop_id: string;
+}
+
+interface ScriptGeneratorConfig {
+    poscake: {
+        api_url: string;
+        shops: ShopConfig[];
+    };
+    pancake_crm?: {
+        api_url: string;
+        api_token: string;
+    };
+}
+
+interface PancakeCustomer {
+    id: string;
+    name: string;
+    fb_id: string;
+    customer_id: string;
+    phone_numbers?: string[];
+    conversation_link: string;
+    order_count: number;
+    updated_at: string;
+    inserted_at: string;
+    tags?: Array<{ name: string }>;
+    shop_customer_addresses?: Array<{ full_address?: string }>;
+}
+
+interface CRMConversation {
+    id: string;
+    from: { id: string; name: string };
+    from_psid: number | string;
+    snippet: string;
+    message_count: number;
+    tags: number[];
+    has_phone: boolean;
+    recent_phone_numbers: Array<string | { phone_number?: string; captured?: string }>;
+    updated_at: string;
+    inserted_at: string;
+    last_customer_interactive_at: string;
+    customers: Array<{ fb_id: string; id: string; name: string }>;
+    page_id: number | string;
+    type: string;
+}
+
+// ─── Load config ──────────────────────────────────────────────────────────────
+function loadConfig(): ScriptGeneratorConfig {
+    const configPath = path.join(process.cwd(), "config", "script-generator.yaml");
+    const raw = fs.readFileSync(configPath, "utf-8");
+    return yaml.load(raw) as ScriptGeneratorConfig;
+}
+
+// ─── GET: Lấy conversations (CRM) hoặc customers (POS fallback) ─────────────
+export async function GET(req: NextRequest) {
+    try {
+        const config = loadConfig();
+        const { searchParams } = new URL(req.url);
+        const shopId = searchParams.get("shopId");
+        const getPages = searchParams.get("getPages") === "true";
+        const pageFilter = searchParams.get("pageFilter") || "";
+        const page = searchParams.get("page") || "1";
+
+        if (!shopId) {
+            const shops = config.poscake.shops.map((s) => ({
+                name: s.name,
+                shop_id: s.shop_id,
+            }));
+            return NextResponse.json({ shops });
+        }
+
+        const shop = config.poscake.shops.find((s) => s.shop_id === shopId);
+        if (!shop) {
+            return NextResponse.json({ error: `Shop ${shopId} không tồn tại` }, { status: 404 });
+        }
+
+        // If getPages=true, return list of pages for this shop
+        if (getPages) {
+            try {
+                const shopRes = await fetch(
+                    `${config.poscake.api_url}/shops/${shop.shop_id}?api_key=${shop.api_key}`
+                );
+                const shopData = await shopRes.json();
+                const shopInfo = shopData?.shop || shopData;
+
+                const pages = (shopInfo?.pages || []).map((p: { id: string; name?: string; platform?: string }) => ({
+                    pageId: String(p.id),
+                    name: p.name || `Page ${p.id}`,
+                    platform: p.platform || "facebook",
+                }));
+
+                pages.sort((a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name));
+
+                return NextResponse.json({ pages, shopName: shop.name, totalPages: pages.length });
+            } catch (err) {
+                console.error("[broadcast] Pages fetch error:", err);
+                return NextResponse.json({ pages: [], shopName: shop.name });
+            }
+        }
+
+        // ─── Primary: CRM Conversations (ALL who messaged) ────────────────
+        if (pageFilter && config.pancake_crm?.api_token) {
+            try {
+                const crmData = await fetchCRMConversations(
+                    config.pancake_crm.api_url,
+                    config.pancake_crm.api_token,
+                    pageFilter,
+                    Number(page)
+                );
+                if (crmData) return NextResponse.json(crmData);
+            } catch (err) {
+                console.error("[broadcast] CRM fallback to POS:", err);
+            }
+        }
+
+        // ─── Fallback: POS Customers (only buyers) ────────────────────────
+        return await fetchPOSCustomers(config, shop, page, pageFilter);
+    } catch (error: unknown) {
+        console.error("[broadcast] GET Error:", error);
+        const message = error instanceof Error ? error.message : "Unknown error";
+        return NextResponse.json({ error: message }, { status: 500 });
+    }
+}
+
+// ─── CRM Conversations fetcher ───────────────────────────────────────────────
+async function fetchCRMConversations(
+    apiUrl: string,
+    token: string,
+    pageId: string,
+    _page: number
+): Promise<object | null> {
+    const limit = 50;
+    const allCustomers: Array<Record<string, unknown>> = [];
+    let currentPage = 1;
+    let emptyStreak = 0;
+    const maxEmptyPages = 5; // CRM API may have gaps — tolerate up to 5 empty pages
+    const maxPages = 30; // Safety limit
+
+    // Loop through ALL pages, tolerating gaps
+    while (emptyStreak < maxEmptyPages && currentPage <= maxPages) {
+        const url = `${apiUrl}/pages/${pageId}/conversations?access_token=${token}&limit=${limit}&page=${currentPage}`;
+        
+        try {
+            const res = await fetch(url);
+            const data = await res.json();
+
+            if (data.error_code) {
+                console.error(`[broadcast] CRM Error ${data.error_code}: ${data.message}`);
+                if (allCustomers.length === 0) return null;
+                break;
+            }
+
+            const conversations: CRMConversation[] = data.conversations || [];
+            
+            if (conversations.length === 0) {
+                emptyStreak++;
+                currentPage++;
+                continue;
+            }
+            
+            // Reset empty streak when we find data
+            emptyStreak = 0;
+
+            const batch = conversations
+                .filter((c) => c && c.id && (c.from_psid || c.from?.id))
+                .map((c) => {
+                    // Extract phone number — CRM returns objects like {phone_number: "0909..."}
+                    let phone = "";
+                    const phoneArr = c.recent_phone_numbers || [];
+                    if (phoneArr.length > 0) {
+                        const p = phoneArr[0];
+                        if (typeof p === 'string') {
+                            phone = p;
+                        } else if (p && typeof p === 'object') {
+                            phone = (p as Record<string, string>).phone_number || (p as Record<string, string>).captured || String(p);
+                        }
+                    }
+
+                    return {
+                        id: String(c.id || ""),
+                        customerName: String(c.from?.name || c.customers?.[0]?.name || "Không rõ tên"),
+                        customerPhone: phone,
+                        fbId: String(c.id || ""),
+                        psid: String(c.from_psid || c.from?.id || ""),
+                        pageFbId: String(c.page_id || pageId),
+                        customerId: String(c.customers?.[0]?.id || ""),
+                        conversationLink: `https://pages.fm/conversations/${String(c.id || "")}`,
+                        orderCount: 0,
+                        messageCount: Number(c.message_count) || 0,
+                        snippet: String(c.snippet || "").replace(/[\r\n]+/g, " ").slice(0, 100),
+                        tags: (c.tags || []).map((t: number) => String(t)),
+                        address: "",
+                        updatedAt: String(c.updated_at || c.inserted_at || ""),
+                        lastInteraction: String(c.last_customer_interactive_at || ""),
+                        source: "crm" as const,
+                    };
+                });
+
+            allCustomers.push(...batch);
+            currentPage++;
+        } catch (err) {
+            console.error(`[broadcast] CRM fetch page ${currentPage} error:`, err);
+            emptyStreak++;
+            currentPage++;
+        }
+    }
+
+    console.log(`[broadcast] CRM loaded ${allCustomers.length} customers across ${currentPage - 1} pages`);
+
+    return {
+        customers: allCustomers,
+        total: allCustomers.length,
+        page: 1,
+        totalPages: 1,
+        source: "crm",
+    };
+}
+
+// ─── POS Customers fetcher (fallback) ─────────────────────────────────────────
+async function fetchPOSCustomers(
+    config: ScriptGeneratorConfig,
+    shop: ShopConfig,
+    _page: string,
+    pageFilter: string
+): Promise<NextResponse> {
+    const pageSize = 50;
+    const allCustomers: Array<Record<string, unknown>> = [];
+    let currentPage = 1;
+    let hasMore = true;
+    const maxPages = 30;
+
+    while (hasMore && currentPage <= maxPages) {
+        const url = `${config.poscake.api_url}/shops/${shop.shop_id}/customers?api_key=${shop.api_key}&page=${currentPage}&page_size=${pageSize}`;
+
+        try {
+            const res = await fetch(url);
+            if (!res.ok) {
+                if (allCustomers.length === 0) {
+                    return NextResponse.json({ error: `POS API lỗi: ${res.status}` }, { status: res.status });
+                }
+                break;
+            }
+
+            const data = await res.json();
+            const batch = (data.data || []).map((c: PancakeCustomer) => ({
+                id: c.id,
+                customerName: c.name || "Không rõ tên",
+                customerPhone: c.phone_numbers?.[0] || "",
+                fbId: c.fb_id || "",
+                psid: c.fb_id ? c.fb_id.split("_").slice(1).join("_") : "",
+                pageFbId: c.fb_id ? c.fb_id.split("_")[0] : "",
+                customerId: c.customer_id || "",
+                conversationLink: c.conversation_link || "",
+                orderCount: c.order_count || 0,
+                messageCount: 0,
+                snippet: "",
+                tags: (c.tags || []).map((t: { name: string }) => t.name),
+                address: c.shop_customer_addresses?.[0]?.full_address || "",
+                updatedAt: c.updated_at || c.inserted_at || "",
+                lastInteraction: "",
+                source: "pos" as const,
+            }));
+
+            allCustomers.push(...batch);
+
+            if (batch.length < pageSize) {
+                hasMore = false;
+            } else {
+                currentPage++;
+            }
+        } catch (err) {
+            console.error(`[broadcast] POS fetch page ${currentPage} error:`, err);
+            break;
+        }
+    }
+
+    let customers = allCustomers;
+    if (pageFilter) {
+        customers = customers.filter((c: Record<string, unknown>) => c.pageFbId === pageFilter);
+    }
+
+    console.log(`[broadcast] POS loaded ${customers.length} customers (total fetched: ${allCustomers.length})`);
+
+    return NextResponse.json({
+        customers,
+        total: customers.length,
+        page: 1,
+        totalPages: 1,
+        source: "pos",
+    });
+}
+
+// ─── POST: Gửi tin nhắn hàng loạt qua Pancake Public API ─────────────────────
+interface BroadcastRequest {
+    recipients: Array<{ psid: string; pageFbId: string; name: string; conversationId?: string }>;
+    message: string;
+}
+
+// Generate Pancake Page Access Token
+async function generatePageAccessToken(
+    pageId: string,
+    userToken: string
+): Promise<string | null> {
+    try {
+        const res = await fetch(
+            `https://pages.fm/api/v1/pages/${pageId}/generate_page_access_token?access_token=${userToken}`,
+            { method: "POST" }
+        );
+        const data = await res.json();
+        if (data.success && data.page_access_token) {
+            return data.page_access_token;
+        }
+        console.error("[broadcast] Generate token failed:", data);
+        return null;
+    } catch (err) {
+        console.error("[broadcast] Generate token error:", err);
+        return null;
+    }
+}
+
+export async function POST(req: NextRequest) {
+    try {
+        const config = loadConfig();
+        const body: BroadcastRequest = await req.json();
+        const { recipients, message } = body;
+
+        if (!recipients?.length || !message?.trim()) {
+            return NextResponse.json(
+                { error: "Thiếu thông tin: recipients, message" },
+                { status: 400 }
+            );
+        }
+
+        const crmToken = config.pancake_crm?.api_token;
+        if (!crmToken) {
+            return NextResponse.json(
+                { error: "Chưa cấu hình pancake_crm.api_token trong config." },
+                { status: 500 }
+            );
+        }
+
+        // Group recipients by page to generate tokens per page
+        const pageGroups = new Map<string, typeof recipients>();
+        for (const r of recipients) {
+            const pageId = r.pageFbId;
+            if (!pageGroups.has(pageId)) pageGroups.set(pageId, []);
+            pageGroups.get(pageId)!.push(r);
+        }
+
+        // Generate page tokens
+        const pageTokens = new Map<string, string>();
+        for (const pageId of pageGroups.keys()) {
+            const token = await generatePageAccessToken(pageId, crmToken);
+            if (token) pageTokens.set(pageId, token);
+        }
+
+        const results: Array<{
+            psid: string;
+            name: string;
+            success: boolean;
+            error?: string;
+        }> = [];
+
+        for (const recipient of recipients) {
+            try {
+                const pageId = recipient.pageFbId;
+                const pageToken = pageTokens.get(pageId);
+
+                if (!pageToken) {
+                    results.push({
+                        psid: recipient.psid,
+                        name: recipient.name,
+                        success: false,
+                        error: `Không tạo được token cho page ${pageId}`,
+                    });
+                    continue;
+                }
+
+                // Conversation ID = pageId_psid
+                const convoId = recipient.conversationId || `${pageId}_${recipient.psid}`;
+
+                const sendRes = await fetch(
+                    `https://pages.fm/api/public_api/v1/pages/${pageId}/conversations/${convoId}/messages?page_access_token=${pageToken}`,
+                    {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            action: "reply_inbox",
+                            message: message.trim(),
+                        }),
+                    }
+                );
+
+                const sendData = await sendRes.json().catch(() => ({}));
+
+                if (sendData.success) {
+                    results.push({ psid: recipient.psid, name: recipient.name, success: true });
+                } else {
+                    const errMsg = sendData.original_error || sendData.message || `HTTP ${sendRes.status}`;
+                    results.push({ psid: recipient.psid, name: recipient.name, success: false, error: String(errMsg) });
+                }
+
+                // Delay 500ms between messages to avoid rate limiting
+                await new Promise((resolve) => setTimeout(resolve, 500));
+            } catch (err) {
+                results.push({
+                    psid: recipient.psid,
+                    name: recipient.name,
+                    success: false,
+                    error: err instanceof Error ? err.message : "Network error",
+                });
+            }
+        }
+
+        const successCount = results.filter((r) => r.success).length;
+
+        return NextResponse.json({
+            success: successCount > 0,
+            message: `✅ Đã gửi ${successCount}/${results.length} tin nhắn`,
+            successCount,
+            totalCount: results.length,
+            results,
+        });
+    } catch (error: unknown) {
+        console.error("[broadcast] POST Error:", error);
+        const message = error instanceof Error ? error.message : "Unknown error";
+        return NextResponse.json({ error: message }, { status: 500 });
+    }
+}

@@ -108,10 +108,10 @@ export default function TALPHAPnLTab({ dateRange }: Props) {
         <div className="space-y-6">
             <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
                 {[
-                    { label: "Doanh thu (VND)", value: formatVNDCompact(summary.revenue), icon: DollarSign, color: "text-emerald-400" },
+                    { label: "Doanh thu (VND)", value: formatVNDCompact(summary.revenue), icon: DollarSign, color: "text-blue-400" },
                     { label: "Chi phí Ads (VND)", value: formatVNDCompact(summary.ads), icon: Megaphone, color: "text-amber-400" },
-                    { label: "Lợi nhuận (trước COGS)", value: formatVNDCompact(summary.profit), icon: summary.profit >= 0 ? TrendingUp : TrendingDown, color: summary.profit >= 0 ? "text-emerald-400" : "text-rose-400" },
-                    { label: "Biên LN", value: fmtPct(summary.margin), icon: Activity, color: summary.margin >= 0 ? "text-emerald-400" : "text-rose-400" },
+                    { label: "Lợi nhuận (trước COGS)", value: formatVNDCompact(summary.profit), icon: summary.profit >= 0 ? TrendingUp : TrendingDown, color: summary.profit >= 0 ? "text-blue-400" : "text-red-400" },
+                    { label: "Biên LN", value: fmtPct(summary.margin), icon: Activity, color: summary.margin >= 0 ? "text-blue-400" : "text-red-400" },
                     { label: "Đơn hàng", value: summary.orders.toLocaleString("vi-VN"), icon: DollarSign, color: "text-blue-400" },
                 ].map((kpi, i) => (
                     <div key={i} className="bg-slate-800/50 border border-slate-700 rounded-xl p-4">
@@ -177,10 +177,10 @@ export default function TALPHAPnLTab({ dateRange }: Props) {
                                 <tr key={i} className="border-b border-slate-700/50 hover:bg-slate-700/30">
                                     <td className="py-2 pl-2 text-foreground font-mono text-xs">{d.date}</td>
                                     <td className="py-2 text-right text-blue-400 font-mono">{d.orders}</td>
-                                    <td className="py-2 text-right text-emerald-400 font-mono">{formatVNDCompact(d.revenue)}</td>
+                                    <td className="py-2 text-right text-blue-400 font-mono">{formatVNDCompact(d.revenue)}</td>
                                     <td className="py-2 text-right text-amber-400 font-mono">{formatVNDCompact(d.ads)}</td>
-                                    <td className={`py-2 text-right font-mono ${d.profit >= 0 ? "text-emerald-400" : "text-rose-400"}`}>{formatVNDCompact(d.profit)}</td>
-                                    <td className={`py-2 text-right pr-2 font-mono text-xs ${d.margin >= 0 ? "text-emerald-300" : "text-rose-300"}`}>{fmtPct(d.margin)}</td>
+                                    <td className={`py-2 text-right font-mono ${d.profit >= 0 ? "text-blue-400" : "text-red-400"}`}>{formatVNDCompact(d.profit)}</td>
+                                    <td className={`py-2 text-right pr-2 font-mono text-xs ${d.margin >= 0 ? "text-blue-300" : "text-rose-300"}`}>{fmtPct(d.margin)}</td>
                                 </tr>
                             ))}
                         </tbody>

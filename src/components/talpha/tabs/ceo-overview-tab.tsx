@@ -31,10 +31,10 @@ interface ProductRow {
 }
 
 function gradeMarketer(roas: number, netProfit: number): { label: string; color: string; glow: string } {
-    if (roas >= 5) return { label: "A+", color: "text-teal-600", glow: "bg-teal-50" };
-    if (roas >= 3.5) return { label: "A", color: "text-teal-600", glow: "bg-teal-50" };
+    if (roas >= 5) return { label: "A+", color: "text-teal-600", glow: "bg-blue-50" };
+    if (roas >= 3.5) return { label: "A", color: "text-teal-600", glow: "bg-blue-50" };
     if (roas >= 2.5) return { label: "B+", color: "text-amber-500", glow: "bg-amber-50" };
-    if (netProfit < 0) return { label: "C", color: "text-rose-500", glow: "bg-rose-50" };
+    if (netProfit < 0) return { label: "C", color: "text-red-500", glow: "bg-red-50" };
     return { label: "B", color: "text-indigo-500", glow: "bg-indigo-50" };
 }
 
@@ -241,7 +241,7 @@ export default function TALPHACeoOverviewTab({ dateRange }: Props) {
             {/* Chi phí chi tiết */}
             <div className="bg-white rounded-2xl p-8 shadow-sm border border-slate-200/80">
                 <h3 className="mb-6 text-[11px] font-bold uppercase tracking-[0.2em] text-slate-400 flex items-center gap-2">
-                    <Sparkles className="h-3.5 w-3.5 text-violet-400" /> Phân tích cấu trúc chi phí
+                    <Sparkles className="h-3.5 w-3.5 text-blue-500" /> Phân tích cấu trúc chi phí
                 </h3>
                 <div className="grid grid-cols-2 gap-4 md:grid-cols-5">
                     <div className="p-4 rounded-xl bg-slate-50 border border-slate-200/60">
@@ -260,9 +260,9 @@ export default function TALPHACeoOverviewTab({ dateRange }: Props) {
                         <div className="text-[10px] font-bold text-slate-400 uppercase mb-2">Tổng chi phí</div>
                         <div className="text-xl font-black text-slate-700">{formatCurrency(totals.ads)}</div>
                     </div>
-                    <div className="p-4 rounded-xl bg-gradient-to-br from-teal-50 to-emerald-50 border border-teal-200/50">
+                    <div className="p-4 rounded-xl bg-gradient-to-br from-blue-50 to-blue-50 border border-teal-200/50">
                         <div className="text-[10px] font-bold text-teal-600/70 uppercase mb-2">Lợi nhuận ròng</div>
-                        <div className={cn("text-xl font-black", totals.net >= 0 ? "text-teal-600" : "text-rose-500")}>
+                        <div className={cn("text-xl font-black", totals.net >= 0 ? "text-teal-600" : "text-red-500")}>
                             {formatCurrency(totals.net)}
                         </div>
                     </div>
@@ -274,7 +274,7 @@ export default function TALPHACeoOverviewTab({ dateRange }: Props) {
                 {/* Marketer Ranking */}
                 <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-100">
                     <h3 className="mb-6 flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">
-                        <Crown className="h-3 w-3 text-violet-400" /> Marketer Performance
+                        <Crown className="h-3 w-3 text-blue-500" /> Marketer Performance
                     </h3>
                     <div className="space-y-4 text-xs">
                         {marketers.map((m, i) => {
@@ -289,7 +289,7 @@ export default function TALPHACeoOverviewTab({ dateRange }: Props) {
                                         </div>
                                     </div>
                                     <div className="text-right">
-                                        <div className={cn("font-bold text-sm", m.net_profit >= 0 ? "text-teal-600" : "text-rose-500")}>
+                                        <div className={cn("font-bold text-sm", m.net_profit >= 0 ? "text-teal-600" : "text-red-500")}>
                                             {formatMoney(m.net_profit)}
                                         </div>
                                         <span className={cn("inline-block px-2 py-0.5 rounded-full text-[9px] font-bold mt-1 shadow-sm", grade.glow, grade.color)}>
@@ -328,7 +328,7 @@ export default function TALPHACeoOverviewTab({ dateRange }: Props) {
                 {/* Market Ranking */}
                 <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-100">
                     <h3 className="mb-6 flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">
-                        <Globe className="h-3 w-3 text-teal-400" /> Market Efficiency
+                        <Globe className="h-3 w-3 text-blue-400" /> Market Efficiency
                     </h3>
                     <div className="space-y-4">
                         {markets.map((m) => (
@@ -340,7 +340,7 @@ export default function TALPHACeoOverviewTab({ dateRange }: Props) {
                                 <div className="text-right">
                                     <div className="text-sm font-bold text-slate-700">{formatMoney(m.revenue)}</div>
                                     <div className={cn("text-[10px] font-bold mt-1",
-                                        m.margin >= 50 ? "text-teal-600" : m.margin >= 30 ? "text-amber-500" : "text-rose-500")}>
+                                        m.margin >= 50 ? "text-teal-600" : m.margin >= 30 ? "text-amber-500" : "text-red-500")}>
                                         Margin: {m.margin}%
                                     </div>
                                 </div>
@@ -353,7 +353,7 @@ export default function TALPHACeoOverviewTab({ dateRange }: Props) {
             {/* Monthly Trend Chart */}
             <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-100">
                 <h3 className="mb-8 text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 flex items-center gap-2">
-                    <Activity className="h-3 w-3 text-violet-400" /> Doanh thu và Lợi nhuận hàng tháng
+                    <Activity className="h-3 w-3 text-blue-500" /> Doanh thu và Lợi nhuận hàng tháng
                 </h3>
                 <ResponsiveContainer width="100%" height={320}>
                     <ComposedChart data={monthly}>
@@ -405,12 +405,12 @@ export default function TALPHACeoOverviewTab({ dateRange }: Props) {
                                         <td className="px-6 py-4 text-right font-medium text-slate-500">{formatNumber(m.orders)}</td>
                                         <td className="px-6 py-4 text-right font-bold text-slate-900">{formatMoney(m.revenue)}</td>
                                         <td className="px-6 py-4 text-right font-bold text-amber-500">{formatMoney(m.ads_spend)}</td>
-                                        <td className={cn("px-6 py-4 text-right font-bold", m.net_profit >= 0 ? "text-teal-600" : "text-rose-500")}>
+                                        <td className={cn("px-6 py-4 text-right font-bold", m.net_profit >= 0 ? "text-teal-600" : "text-red-500")}>
                                             {formatMoney(m.net_profit)}
                                         </td>
                                         <td className="px-6 py-4 text-right">
                                             <span className={cn("inline-block px-2.5 py-1 rounded-full font-bold text-[10px]",
-                                                margin >= 30 ? "bg-teal-50 text-teal-600 border border-teal-100" : margin >= 10 ? "bg-amber-50 text-amber-500 border border-amber-100" : "bg-rose-50 text-rose-500 border border-rose-100")}>
+                                                margin >= 30 ? "bg-blue-50 text-teal-600 border border-teal-100" : margin >= 10 ? "bg-amber-50 text-amber-500 border border-amber-100" : "bg-red-50 text-red-500 border border-rose-100")}>
                                                 {margin.toFixed(1)}%
                                             </span>
                                         </td>
@@ -422,11 +422,11 @@ export default function TALPHACeoOverviewTab({ dateRange }: Props) {
                                 <td className="px-6 py-5 text-right text-slate-700">{formatNumber(totals.orders)}</td>
                                 <td className="px-6 py-5 text-right text-slate-900 font-black">{formatMoney(totals.revenue)}</td>
                                 <td className="px-6 py-5 text-right text-amber-500">{formatMoney(totals.ads)}</td>
-                                <td className={cn("px-6 py-5 text-right font-black", totals.net >= 0 ? "text-teal-600" : "text-rose-500")}>
+                                <td className={cn("px-6 py-5 text-right font-black", totals.net >= 0 ? "text-teal-600" : "text-red-500")}>
                                     {formatMoney(totals.net)}
                                 </td>
                                 <td className="px-6 py-5 text-right">
-                                    <span className="text-violet-600 font-bold bg-violet-50 px-3 py-1 rounded-full border border-violet-100">{overallMargin.toFixed(1)}%</span>
+                                    <span className="text-blue-700 font-bold bg-blue-50 px-3 py-1 rounded-full border border-blue-200">{overallMargin.toFixed(1)}%</span>
                                 </td>
                             </tr>
                         </tbody>

@@ -24,16 +24,16 @@ export function KPICard({
     status = "neutral",
 }: KPICardProps) {
     const accentMap = {
-        success: "border-l-teal-400",
-        warning: "border-l-amber-400",
-        danger: "border-l-rose-400",
+        success: "border-l-blue-500",
+        warning: "border-l-blue-300",
+        danger: "border-l-red-500",
         neutral: "border-l-slate-300",
     };
 
     const iconColorMap = {
-        success: "text-teal-500",
-        warning: "text-amber-500",
-        danger: "text-rose-500",
+        success: "text-blue-500",
+        warning: "text-blue-400",
+        danger: "text-red-500",
         neutral: "text-slate-400",
     };
 
@@ -50,7 +50,7 @@ export function KPICard({
                         <span
                             className={cn(
                                 "mb-1 text-xs font-semibold",
-                                trend.value > 0 ? "text-teal-500" : "text-rose-500"
+                                trend.value > 0 ? "text-blue-500" : "text-red-500"
                             )}
                         >
                             {trend.value > 0 ? "+" : ""}

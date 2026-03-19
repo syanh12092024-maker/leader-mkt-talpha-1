@@ -3,7 +3,7 @@ import * as yaml from "js-yaml";
 import * as path from "path";
 import { runQuery, BQ_DATASET } from "../client";
 
-const YAML_PATH = path.resolve(process.cwd(), "../Agentic-AI-Levelup/config/projects/talpha.yaml");
+const YAML_PATH = path.resolve(process.cwd(), "config/projects/talpha.yaml");
 
 export interface TAlphaConfig {
     meta_ads: { access_token: string; ad_account_ids: string[] };
@@ -23,6 +23,11 @@ export interface TAlphaOrder {
     customer_name: string;
 }
 
+/**
+ * ALL 21 TALPHA ad accounts use VND currency (confirmed via Meta API query).
+ * Meta API returns spend already in VND → NO conversion needed (rate = 1).
+ */
+
 export class TAlphaAdsModel {
     static loadConfig(): TAlphaConfig {
         const raw = fs.readFileSync(YAML_PATH, "utf-8");
@@ -30,33 +35,168 @@ export class TAlphaAdsModel {
     }
 
     static getExchangeRate(currency: string): number {
+        if (currency === "VND") return 1;
         const cfg = this.loadConfig();
         const rateObj = cfg.exchange_rates.find(r => r.from === currency);
         return rateObj ? rateObj.rate : 7000;
     }
 
+    /**
+     * Fetch ALL pages from Meta Ads API (handles pagination).
+     * Meta API returns max ~25-500 results per page.
+     */
+    static async fetchAllPages(initialUrl: string): Promise<any[]> {
+        const allData: any[] = [];
+        let url: string | null = initialUrl;
+        let pageCount = 0;
+
+        while (url && pageCount < 20) { // Safety limit: max 20 pages
+            try {
+                const res = await fetch(url);
+                const json: any = await res.json();
+
+                if (json.error) {
+                    console.error("Meta API Error:", json.error.message);
+                    break;
+                }
+
+                if (json.data) {
+                    allData.push(...json.data);
+                }
+
+                url = json.paging?.next || null;
+                pageCount++;
+            } catch (e) {
+                console.error("Meta Ads fetch error:", e);
+                break;
+            }
+        }
+        return allData;
+    }
+
+    /**
+     * Fetch Meta Ads with ALL required metrics:
+     * spend, purchases, conversion_value, messages, comments,
+     * impressions, reach (for CPM, frequency, ROAS calculation)
+     */
     static async fetchMetaAds(fromDate: string, toDate: string) {
         const cfg = this.loadConfig();
         const { access_token, ad_account_ids } = cfg.meta_ads;
         const allAds: any[] = [];
         const timeRange = `&time_range=${encodeURIComponent(JSON.stringify({ since: fromDate, until: toDate }))}`;
 
+        // Fields to request from Meta API
+        const fields = [
+            "campaign_name", "campaign_id", "ad_id", "adset_name",
+            "spend", "impressions", "reach",
+            "actions", "action_values",
+            "cost_per_action_type"
+        ].join(",");
         await Promise.all(ad_account_ids.map(async (accId) => {
             try {
-                const url = `https://graph.facebook.com/v21.0/${accId}/insights?fields=campaign_name,campaign_id,ad_id,spend,impressions,actions&level=ad${timeRange}&access_token=${access_token}`;
-                const res = await fetch(url);
-                const data: any = await res.json();
+                const url = `https://graph.facebook.com/v21.0/${accId}/insights?fields=${fields}&level=ad&limit=500${timeRange}&access_token=${access_token}`;
 
-                (data.data || []).forEach((row: any) => {
+                // Fetch campaign statuses in parallel
+                const campaignStatusUrl = `https://graph.facebook.com/v21.0/${accId}/campaigns?fields=id,effective_status&limit=500&access_token=${access_token}`;
+                const [rows, campaignRows] = await Promise.all([
+                    this.fetchAllPages(url),
+                    this.fetchAllPages(campaignStatusUrl),
+                ]);
+
+                // Build campaign_id → effective_status map
+                const statusMap: Record<string, string> = {};
+                campaignRows.forEach((c: any) => { statusMap[c.id] = c.effective_status || 'UNKNOWN'; });
+
+                rows.forEach((row: any) => {
                     const actions = row.actions || [];
-                    const messages = actions.find((a: any) => a.action_type === "onsite_conversion.messaging_first_reply" || a.action_type === "onsite_conversion.messaging_conversation_started_7d")?.value || 0;
+                    const actionValues = row.action_values || [];
+                    const costPerAction = row.cost_per_action_type || [];
+
+                    // ── Extract action metrics ──
+                    const getAction = (types: string[]): number => {
+                        for (const t of types) {
+                            const found = actions.find((a: any) => a.action_type === t);
+                            if (found) return parseInt(found.value || "0");
+                        }
+                        return 0;
+                    };
+
+                    const getActionValue = (types: string[]): number => {
+                        for (const t of types) {
+                            const found = actionValues.find((a: any) => a.action_type === t);
+                            if (found) return parseFloat(found.value || "0");
+                        }
+                        return 0;
+                    };
+
+                    // Messages (first reply or conversation started)
+                    const messages = getAction([
+                        "onsite_conversion.messaging_first_reply",
+                        "onsite_conversion.messaging_conversation_started_7d"
+                    ]);
+
+                    // Purchases (offsite conversions)
+                    const purchases = getAction([
+                        "offsite_conversion.fb_pixel_purchase",
+                        "purchase",
+                        "omni_purchase"
+                    ]);
+
+                    // Conversion value (revenue from purchases)
+                    const conversionValue = getActionValue([
+                        "offsite_conversion.fb_pixel_purchase",
+                        "purchase",
+                        "omni_purchase"
+                    ]);
+
+                    // Comments on post
+                    const comments = getAction([
+                        "comment",
+                        "post_comment"
+                    ]);
+
+                    // Spend is already in VND (all accounts are VND)
+                    const spend = parseFloat(row.spend || "0");
+                    const impressions = parseInt(row.impressions || "0");
+                    const reach = parseInt(row.reach || "0");
+
+                    // CPM = (spend / impressions) * 1000
+                    const cpm = impressions > 0 ? (spend / impressions) * 1000 : 0;
+
+                    // Frequency = impressions / reach
+                    const frequency = reach > 0 ? impressions / reach : 0;
+
+                    // Cost per purchase
+                    const costPerPurchase = purchases > 0 ? spend / purchases : 0;
+
+                    // Cost per message
+                    const costPerMessage = messages > 0 ? spend / messages : 0;
+
+                    // ROAS = conversion_value / spend
+                    const roas = spend > 0 ? conversionValue / spend : 0;
+
                     allAds.push({
                         account_id: accId,
                         campaign_id: row.campaign_id,
                         campaign_name: row.campaign_name,
                         ad_id: row.ad_id,
-                        spend_vnd: parseFloat(row.spend || "0") * 7010, // Default to AED rate
-                        messages: parseInt(messages),
+                        adset_name: row.adset_name || "",
+                        effective_status: statusMap[row.campaign_id] || "UNKNOWN",
+                        // Raw metrics from Meta
+                        spend,           // Already VND
+                        impressions,
+                        reach,
+                        messages,
+                        purchases,
+                        conversion_value: conversionValue,
+                        comments,
+                        // Calculated metrics
+                        cpm,
+                        frequency: parseFloat(frequency.toFixed(2)),
+                        cost_per_purchase: costPerPurchase,
+                        cost_per_message: costPerMessage,
+                        roas: parseFloat(roas.toFixed(2)),
+                        // Legacy fields (for POS matching — will be updated later)
                         orders: 0,
                         revenue_vnd: 0
                     });
@@ -72,18 +212,34 @@ export class TAlphaAdsModel {
         const cfg = this.loadConfig();
         const orders: TAlphaOrder[] = [];
 
-        // Simple API fetch for current dates
         for (const shop of cfg.poscake.shops) {
             try {
-                const rate = this.getExchangeRate(shop.name === "UAE" ? "AED" : shop.name === "Saudi" ? "SAR" : "KWD");
+                const currency =
+                    shop.name === "UAE" ? "AED" :
+                    shop.name === "Saudi" ? "SAR" :
+                    shop.name === "Kuwait" ? "KWD" :
+                    shop.name === "Oman" ? "OMR" :
+                    shop.name === "Qatar" ? "QAR" :
+                    shop.name === "Bahrain" ? "BHD" :
+                    shop.name === "Japan" ? "JPY" :
+                    shop.name === "Taiwan" ? "TWD" : "AED";
+                const rate = this.getExchangeRate(currency);
+                // JPY is a zero-decimal currency (no cents), cod is already in yen
+                const ZERO_DECIMAL_CURRENCIES = ["JPY"];
+                const isZeroDecimal = ZERO_DECIMAL_CURRENCIES.includes(currency);
                 const url = `${shop.api_url}/shops/${shop.shop_id}/orders?api_key=${shop.api_key}&limit=100`;
                 const res = await fetch(url);
                 const data = await res.json();
 
                 (data.data || []).forEach((o: any) => {
-                    const orderDate = String(o.inserted_at).slice(0, 10);
+                    // POS inserted_at is UTC but lacks 'Z' suffix — append it for correct parsing
+                    const utcMs = new Date(String(o.inserted_at) + 'Z').getTime();
+                    const vnMs = utcMs + 7 * 60 * 60 * 1000;
+                    const vn = new Date(vnMs);
+                    const orderDate = `${vn.getUTCFullYear()}-${String(vn.getUTCMonth() + 1).padStart(2, '0')}-${String(vn.getUTCDate()).padStart(2, '0')}`;
                     if (orderDate >= fromDate && orderDate <= toDate) {
-                        const priceLocal = (o.cod || o.total_price || 0) / 100;
+                        const rawCod = o.cod || o.total_price || 0;
+                        const priceLocal = isZeroDecimal ? rawCod : rawCod / 100;
                         orders.push({
                             id: String(o.id),
                             shop_name: shop.name,
@@ -104,24 +260,156 @@ export class TAlphaAdsModel {
         return orders;
     }
 
+    // Map campaign name prefix to POS shop name
+    private static MARKET_MAP: Record<string, string> = {
+        "JAPAN": "Japan", "TAIWAN": "Taiwan",
+        "SAUDI": "Saudi", "UAE": "UAE", "KUWAIT": "Kuwait",
+        "OMAN": "Oman", "QATAR": "Qatar", "BAHRAIN": "Bahrain",
+    };
+
+    private static getCampaignMarket(campaignName: string): string | null {
+        const prefix = (campaignName || "").split("/")[0]?.toUpperCase().trim();
+        return this.MARKET_MAP[prefix] || null;
+    }
+
     static aggregate(ads: any[], orders: TAlphaOrder[]) {
-        const adIdMap = new Map();
-        ads.forEach((ad, idx) => { if (ad.ad_id) adIdMap.set(ad.ad_id, idx); });
+        // ═══ PASS 1: Match POS orders by ad_id (works for GCC markets) ═══
+        const adIdMap = new Map<string, number>();
+        ads.forEach((ad, idx) => { if (ad.ad_id) adIdMap.set(String(ad.ad_id), idx); });
+
+        const matchedOrderIds = new Set<string>();
 
         orders.forEach(order => {
-            if (order.ad_id && adIdMap.has(order.ad_id)) {
-                const idx = adIdMap.get(order.ad_id);
+            const adId = order.ad_id ? String(order.ad_id) : null;
+            if (adId && adIdMap.has(adId)) {
+                const idx = adIdMap.get(adId)!;
                 ads[idx].orders += 1;
                 ads[idx].revenue_vnd += order.total_price_vnd;
+                matchedOrderIds.add(order.id);
             }
         });
 
+        // ═══ PASS 2: Market-based fallback for unmatched orders ═══
+        // Group unmatched orders by shop_name (market)
+        const unmatchedByMarket = new Map<string, TAlphaOrder[]>();
+        orders.forEach(order => {
+            if (!matchedOrderIds.has(order.id)) {
+                const market = order.shop_name || "Unknown";
+                if (!unmatchedByMarket.has(market)) unmatchedByMarket.set(market, []);
+                unmatchedByMarket.get(market)!.push(order);
+            }
+        });
+
+        // For each market with unmatched orders, distribute to campaigns by spend
+        unmatchedByMarket.forEach((marketOrders, marketName) => {
+            // Group ads by campaign for this market
+            const campaignMap = new Map<string, { indices: number[], totalSpend: number }>();
+
+            ads.forEach((ad, idx) => {
+                const adMarket = this.getCampaignMarket(ad.campaign_name);
+                if (adMarket === marketName) {
+                    const key = ad.campaign_name;
+                    if (!campaignMap.has(key)) campaignMap.set(key, { indices: [], totalSpend: 0 });
+                    const entry = campaignMap.get(key)!;
+                    entry.indices.push(idx);
+                    entry.totalSpend += ad.spend;
+                }
+            });
+
+            if (campaignMap.size === 0) return;
+
+            const totalOrders = marketOrders.length;
+            const totalRevenue = marketOrders.reduce((s, o) => s + o.total_price_vnd, 0);
+            const totalMarketSpend = Array.from(campaignMap.values()).reduce((s, c) => s + c.totalSpend, 0);
+
+            // Sort campaigns by spend descending — highest spend gets orders first
+            const campaigns = Array.from(campaignMap.entries())
+                .sort((a, b) => b[1].totalSpend - a[1].totalSpend);
+
+            if (totalMarketSpend > 0) {
+                // Largest remainder method for whole-number order allocation
+                const rawShares = campaigns.map(([, c]) => (c.totalSpend / totalMarketSpend) * totalOrders);
+                const floorShares = rawShares.map(Math.floor);
+                let remaining = totalOrders - floorShares.reduce((s, v) => s + v, 0);
+
+                // Give remaining orders to campaigns with largest fractional parts
+                const fractionals = rawShares.map((r, i) => ({ i, frac: r - Math.floor(r) }));
+                fractionals.sort((a, b) => b.frac - a.frac);
+                for (let k = 0; k < remaining; k++) {
+                    floorShares[fractionals[k].i] += 1;
+                }
+
+                // Apply allocation: orders to first ad in each campaign, revenue proportionally
+                let allocatedRevenue = 0;
+                campaigns.forEach(([, camp], ci) => {
+                    const orderShare = floorShares[ci];
+                    const revenueShare = ci === campaigns.length - 1
+                        ? totalRevenue - allocatedRevenue
+                        : Math.round(totalRevenue * (camp.totalSpend / totalMarketSpend));
+
+                    // Give all orders to the first ad of this campaign
+                    ads[camp.indices[0]].orders += orderShare;
+                    // Distribute revenue proportionally across ads in this campaign
+                    let campAllocRev = 0;
+                    const campSpend = camp.totalSpend || 1;
+                    camp.indices.forEach((idx, ai) => {
+                        if (ai === camp.indices.length - 1) {
+                            ads[idx].revenue_vnd += (revenueShare - campAllocRev);
+                        } else {
+                            const adRev = Math.round(revenueShare * (ads[idx].spend / campSpend));
+                            ads[idx].revenue_vnd += adRev;
+                            campAllocRev += adRev;
+                        }
+                    });
+                    allocatedRevenue += revenueShare;
+                });
+            } else {
+                // Equal distribution if no spend data
+                let allocated = 0;
+                campaigns.forEach(([, camp], ci) => {
+                    const share = ci === campaigns.length - 1
+                        ? totalOrders - allocated
+                        : Math.floor(totalOrders / campaigns.length);
+                    ads[camp.indices[0]].orders += share;
+                    allocated += share;
+                    const revShare = Math.round(totalRevenue / campaigns.length);
+                    camp.indices.forEach(idx => { ads[idx].revenue_vnd += revShare; });
+                });
+            }
+        });
+
+        // ═══ Aggregate totals ═══
+        const totalSpend = ads.reduce((s, a) => s + a.spend, 0);
+        const totalImpressions = ads.reduce((s, a) => s + a.impressions, 0);
+        const totalReach = ads.reduce((s, a) => s + a.reach, 0);
+        const totalMessages = ads.reduce((s, a) => s + a.messages, 0);
+        const totalPurchases = ads.reduce((s, a) => s + a.purchases, 0);
+        const totalConversionValue = ads.reduce((s, a) => s + a.conversion_value, 0);
+        const totalComments = ads.reduce((s, a) => s + a.comments, 0);
+
+        // POS totals
+        const posOrders = orders.length;
+        const posRevenue = orders.reduce((s, o) => s + o.total_price_vnd, 0);
+        const posRoas = totalSpend > 0 ? posRevenue / totalSpend : 0;
+
         return {
             ads,
-            total_spend: ads.reduce((s, a) => s + a.spend_vnd, 0),
-            total_revenue: orders.reduce((s, o) => s + o.total_price_vnd, 0),
-            total_orders: orders.length,
-            total_messages: ads.reduce((s, a) => s + a.messages, 0)
+            orders,
+            total_spend: totalSpend,
+            total_impressions: totalImpressions,
+            total_reach: totalReach,
+            total_messages: totalMessages,
+            total_purchases: totalPurchases,
+            total_conversion_value: totalConversionValue,
+            total_comments: totalComments,
+            total_cpm: totalImpressions > 0 ? (totalSpend / totalImpressions) * 1000 : 0,
+            total_frequency: totalReach > 0 ? totalImpressions / totalReach : 0,
+            total_roas: totalSpend > 0 ? totalConversionValue / totalSpend : 0,
+            total_cost_per_purchase: totalPurchases > 0 ? totalSpend / totalPurchases : 0,
+            total_cost_per_message: totalMessages > 0 ? totalSpend / totalMessages : 0,
+            pos_orders: posOrders,
+            pos_revenue: posRevenue,
+            pos_roas: parseFloat(posRoas.toFixed(2)),
         };
     }
 }

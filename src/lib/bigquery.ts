@@ -21,7 +21,7 @@ function createBigQueryClient() {
     }
 
     // Option 3: Local key file (for development)
-    const keyFilename = path.join(process.cwd(), "../Agentic-AI-Levelup/config/bigquery-key.json");
+    const keyFilename = path.join(process.cwd(), "config/bigquery-key.json");
     return new BigQuery({ projectId, keyFilename });
 }
 

@@ -6,7 +6,8 @@ export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
-    const date = searchParams.get("from_date") || new Date().toISOString().slice(0, 10);
+    const fromDate = searchParams.get("from_date") || new Date().toISOString().slice(0, 10);
+    const toDate = searchParams.get("to_date") || fromDate;
     const mode = searchParams.get("mode");
 
     try {
@@ -23,14 +24,16 @@ export async function GET(req: NextRequest) {
             });
         }
 
-        const ads = await TAlphaAdsModel.fetchMetaAds(date, date);
-        const orders = await TAlphaAdsModel.fetchPOSHybrid(date, date);
+        const ads = await TAlphaAdsModel.fetchMetaAds(fromDate, toDate);
+        const orders = await TAlphaAdsModel.fetchPOSHybrid(fromDate, toDate);
         const result = TAlphaAdsModel.aggregate(ads, orders);
 
         return NextResponse.json({
             success: true,
             ...result,
-            date
+            date: fromDate,
+            from_date: fromDate,
+            to_date: toDate
         });
     } catch (error: any) {
         console.error("API ROUTE ERROR:", error);

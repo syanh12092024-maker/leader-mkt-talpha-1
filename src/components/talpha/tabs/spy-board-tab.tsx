@@ -48,7 +48,7 @@ function formatNumber(n: number): string {
 
 function ScoreBar({ score, max = 100 }: { score: number; max?: number }) {
     const pct = Math.min(100, (score / max) * 100);
-    const color = pct >= 60 ? "bg-teal-500" : pct >= 30 ? "bg-amber-400" : "bg-slate-300";
+    const color = pct >= 60 ? "bg-blue-500" : pct >= 30 ? "bg-red-400" : "bg-slate-300";
     return (
         <div className="flex items-center gap-2">
             <div className="w-16 h-1.5 bg-slate-100 rounded-full overflow-hidden">
@@ -61,8 +61,8 @@ function ScoreBar({ score, max = 100 }: { score: number; max?: number }) {
 
 function TierBadge({ tier, emoji }: { tier: string; emoji: string }) {
     const styles: Record<string, string> = {
-        HOT: "bg-rose-50 text-rose-600 border-rose-200",
-        WATCH: "bg-amber-50 text-amber-600 border-amber-200",
+        HOT: "bg-red-50 text-red-600 border-red-200",
+        WATCH: "bg-blue-50 text-blue-600 border-blue-200",
         SKIP: "bg-slate-50 text-slate-400 border-slate-200",
     };
     return (
@@ -107,7 +107,7 @@ export default function SpyBoardTab() {
     if (loading && !data) {
         return (
             <div className="flex items-center justify-center h-64">
-                <RotateCw className="h-6 w-6 text-violet-400 animate-spin" />
+                <RotateCw className="h-6 w-6 text-blue-500 animate-spin" />
             </div>
         );
     }
@@ -120,7 +120,7 @@ export default function SpyBoardTab() {
                     label="Tổng Sản Phẩm"
                     value={data?.total || 0}
                     icon={<Search className="h-4 w-4" />}
-                    color="violet"
+                    color="blue"
                 />
                 <KPIStatCard
                     label="HOT — Test ngay"
@@ -152,7 +152,7 @@ export default function SpyBoardTab() {
                             className={cn(
                                 "px-3 py-1.5 rounded-lg text-xs font-semibold transition-all",
                                 filterTier === tier
-                                    ? "bg-violet-500 text-white shadow-sm"
+                                    ? "bg-blue-600 text-white shadow-sm"
                                     : "bg-slate-100 text-slate-500 hover:bg-slate-200"
                             )}
                         >
@@ -167,7 +167,7 @@ export default function SpyBoardTab() {
                             <select
                                 value={selectedDate}
                                 onChange={(e) => handleDateChange(e.target.value)}
-                                className="text-xs bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 text-slate-600 focus:outline-none focus:border-violet-300"
+                                className="text-xs bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 text-slate-600 focus:outline-none focus:border-blue-400"
                             >
                                 {data.available_dates.map(d => (
                                     <option key={d} value={d}>{d}</option>
@@ -190,7 +190,7 @@ export default function SpyBoardTab() {
             <div className="bg-white rounded-2xl shadow-sm border border-slate-200/80 overflow-hidden">
                 <div className="p-5 border-b border-slate-100 flex items-center justify-between">
                     <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
-                        <Search className="h-4 w-4 text-violet-400" />
+                        <Search className="h-4 w-4 text-blue-500" />
                         Bảng Sản Phẩm Spy
                     </h3>
                     <span className="text-[10px] font-semibold text-slate-400 bg-slate-50 px-2 py-1 rounded-md">
@@ -226,17 +226,17 @@ export default function SpyBoardTab() {
                                     </td>
                                     <td className="px-3 py-3.5 text-right">
                                         <div className="flex items-center justify-end gap-1">
-                                            {p.details?.trend_rising && <TrendingUp className="h-3 w-3 text-teal-500" />}
+                                            {p.details?.trend_rising && <TrendingUp className="h-3 w-3 text-blue-500" />}
                                             <span className="text-xs font-mono text-slate-600">{p.breakdown?.google_trends || 0}đ</span>
                                         </div>
                                     </td>
                                     <td className="px-3 py-3.5 text-right">
                                         <div className="text-xs font-mono text-slate-600">{p.details?.fb_ad_count || 0} ads</div>
-                                        <div className="text-[10px] text-violet-400 font-semibold">{p.breakdown?.fb_ads || 0}đ</div>
+                                        <div className="text-[10px] text-blue-500 font-semibold">{p.breakdown?.fb_ads || 0}đ</div>
                                     </td>
                                     <td className="px-3 py-3.5 text-right">
                                         <div className="text-xs font-mono text-slate-600">{formatNumber(p.details?.shopee_sold || 0)} sold</div>
-                                        <div className="text-[10px] text-teal-500 font-semibold">{p.breakdown?.shopee_rank || 0}đ</div>
+                                        <div className="text-[10px] text-blue-500 font-semibold">{p.breakdown?.shopee_rank || 0}đ</div>
                                     </td>
                                     <td className="px-3 py-3.5 text-right">
                                         <div className="text-xs font-mono text-slate-600">{formatNumber(p.details?.tiktok_views || 0)} views</div>
@@ -248,7 +248,7 @@ export default function SpyBoardTab() {
                                                 href={p.fb_spy_link}
                                                 target="_blank"
                                                 rel="noopener noreferrer"
-                                                className="inline-flex items-center gap-1 px-2 py-1 bg-violet-50 text-violet-600 rounded-md text-[10px] font-semibold hover:bg-violet-100 transition"
+                                                className="inline-flex items-center gap-1 px-2 py-1 bg-blue-50 text-blue-600 rounded-md text-[10px] font-semibold hover:bg-blue-100 transition"
                                             >
                                                 FB Ads <ExternalLink className="h-2.5 w-2.5" />
                                             </a>
@@ -272,9 +272,9 @@ export default function SpyBoardTab() {
 
 function KPIStatCard({ label, value, icon, color }: { label: string; value: number; icon: React.ReactNode; color: string }) {
     const colorMap: Record<string, { bg: string; text: string; border: string }> = {
-        violet: { bg: "bg-violet-50", text: "text-violet-500", border: "border-l-violet-400" },
-        rose: { bg: "bg-rose-50", text: "text-rose-500", border: "border-l-rose-400" },
-        amber: { bg: "bg-amber-50", text: "text-amber-500", border: "border-l-amber-400" },
+        blue: { bg: "bg-blue-50", text: "text-blue-500", border: "border-l-blue-500" },
+        rose: { bg: "bg-red-50", text: "text-red-500", border: "border-l-red-500" },
+        amber: { bg: "bg-blue-50", text: "text-blue-400", border: "border-l-blue-400" },
         slate: { bg: "bg-slate-50", text: "text-slate-400", border: "border-l-slate-300" },
     };
     const c = colorMap[color] || colorMap.slate;

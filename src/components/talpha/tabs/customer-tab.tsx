@@ -17,7 +17,7 @@ interface Props { dateRange?: { from: Date; to: Date }; projectId?: string }
 
 function customerTier(orders: number): { label: string; cls: string } {
     if (orders >= 6) return { label: "👑 VIP", cls: "text-amber-400" };
-    if (orders >= 3) return { label: "💎 Loyal", cls: "text-purple-400" };
+    if (orders >= 3) return { label: "💎 Loyal", cls: "text-blue-500" };
     if (orders >= 2) return { label: "🔁 Repeat", cls: "text-blue-400" };
     return { label: "🆕 New", cls: "text-slate-400" };
 }
@@ -141,9 +141,9 @@ export default function TALPHACustomerTab({ dateRange }: Props) {
             <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
                 {[
                     { label: "KH duy nhất", value: kpis.unique.toLocaleString("vi-VN"), icon: Users, color: "text-blue-400" },
-                    { label: "Tổng đơn", value: kpis.totalOrders.toLocaleString("vi-VN"), icon: ShoppingCart, color: "text-emerald-400" },
-                    { label: "Đơn/KH", value: kpis.avgPerCust.toFixed(1), icon: Repeat, color: "text-purple-400" },
-                    { label: "Tỷ lệ quay lại", value: kpis.repeatRate.toFixed(1) + "%", icon: Heart, color: kpis.repeatRate > 20 ? "text-emerald-400" : "text-amber-400" },
+                    { label: "Tổng đơn", value: kpis.totalOrders.toLocaleString("vi-VN"), icon: ShoppingCart, color: "text-blue-400" },
+                    { label: "Đơn/KH", value: kpis.avgPerCust.toFixed(1), icon: Repeat, color: "text-blue-500" },
+                    { label: "Tỷ lệ quay lại", value: kpis.repeatRate.toFixed(1) + "%", icon: Heart, color: kpis.repeatRate > 20 ? "text-blue-400" : "text-amber-400" },
                     { label: "DT/KH (VND)", value: formatVNDCompact(kpis.avgRev), icon: Crown, color: "text-cyan-400" },
                 ].map((kpi, i) => (
                     <div key={i} className="bg-slate-800/50 border border-slate-700 rounded-xl p-4">
@@ -224,7 +224,7 @@ export default function TALPHACustomerTab({ dateRange }: Props) {
                                         <td className="py-2 text-slate-400 font-mono text-xs">{c.phone || "—"}</td>
                                         <td className="py-2 text-xs text-slate-400">{c.shops || "—"}</td>
                                         <td className="py-2 text-right text-blue-400 font-mono">{c.orders}</td>
-                                        <td className="py-2 text-right text-emerald-400 font-mono">{formatVNDCompact(c.revenue || 0)}</td>
+                                        <td className="py-2 text-right text-blue-400 font-mono">{formatVNDCompact(c.revenue || 0)}</td>
                                         <td className={`py-2 text-right pr-2 text-xs ${tier.cls}`}>{tier.label}</td>
                                     </tr>
                                 );

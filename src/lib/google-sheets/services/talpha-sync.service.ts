@@ -13,7 +13,7 @@ function loadCredentials() {
         return JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON);
     }
     // Local: read file
-    const keyPath = path.resolve(process.cwd(), "../Agentic-AI-Levelup/config/bigquery-key.json");
+    const keyPath = path.resolve(process.cwd(), "config/bigquery-key.json");
     if (fs.existsSync(keyPath)) {
         return JSON.parse(fs.readFileSync(keyPath, "utf-8"));
     }
