@@ -336,94 +336,17 @@ export class TAlphaAdsModel {
             });
         }
 
-        // ═══ PASS 2: Market-based fallback for unmatched orders ═══
-        // Group unmatched orders by shop_name (market)
-        const unmatchedByMarket = new Map<string, TAlphaOrder[]>();
-        orders.forEach(order => {
-            if (!matchedOrderIds.has(order.id)) {
-                const market = order.shop_name || "Unknown";
-                if (!unmatchedByMarket.has(market)) unmatchedByMarket.set(market, []);
-                unmatchedByMarket.get(market)!.push(order);
-            }
-        });
+        // ═══ PASS 2 ĐÃ BỊ XÓA ═══
+        // Trước đây: phân bổ đơn không match theo tỷ lệ spend → không chính xác
+        // Giờ: chỉ dùng Pass 1 (ad_id) + Pass 1.5 (marketer name)
+        // Đơn không match → không gán vào campaign nào (honest reporting)
+        const unmatchedOrders = orders.filter(o => !matchedOrderIds.has(o.id));
+        const unmatchedCount = unmatchedOrders.length;
+        const unmatchedRevenue = unmatchedOrders.reduce((s, o) => s + o.total_price_vnd, 0);
+        if (unmatchedCount > 0) {
+            console.log(`[POS] ${unmatchedCount} orders unmatched (no ad_id, marketer unknown) — revenue: ${unmatchedRevenue.toLocaleString()}đ`);
+        }
 
-        // For each market with unmatched orders, distribute to campaigns by spend
-        unmatchedByMarket.forEach((marketOrders, marketName) => {
-            // Group ads by campaign for this market
-            const campaignMap = new Map<string, { indices: number[], totalSpend: number }>();
-
-            ads.forEach((ad, idx) => {
-                const adMarket = this.getCampaignMarket(ad.campaign_name);
-                if (adMarket === marketName) {
-                    const key = ad.campaign_name;
-                    if (!campaignMap.has(key)) campaignMap.set(key, { indices: [], totalSpend: 0 });
-                    const entry = campaignMap.get(key)!;
-                    entry.indices.push(idx);
-                    entry.totalSpend += ad.spend;
-                }
-            });
-
-            if (campaignMap.size === 0) return;
-
-            const totalOrders = marketOrders.length;
-            const totalRevenue = marketOrders.reduce((s, o) => s + o.total_price_vnd, 0);
-            const totalMarketSpend = Array.from(campaignMap.values()).reduce((s, c) => s + c.totalSpend, 0);
-
-            // Sort campaigns by spend descending — highest spend gets orders first
-            const campaigns = Array.from(campaignMap.entries())
-                .sort((a, b) => b[1].totalSpend - a[1].totalSpend);
-
-            if (totalMarketSpend > 0) {
-                // Largest remainder method for whole-number order allocation
-                const rawShares = campaigns.map(([, c]) => (c.totalSpend / totalMarketSpend) * totalOrders);
-                const floorShares = rawShares.map(Math.floor);
-                let remaining = totalOrders - floorShares.reduce((s, v) => s + v, 0);
-
-                // Give remaining orders to campaigns with largest fractional parts
-                const fractionals = rawShares.map((r, i) => ({ i, frac: r - Math.floor(r) }));
-                fractionals.sort((a, b) => b.frac - a.frac);
-                for (let k = 0; k < remaining; k++) {
-                    floorShares[fractionals[k].i] += 1;
-                }
-
-                // Apply allocation: orders to first ad in each campaign, revenue proportionally
-                let allocatedRevenue = 0;
-                campaigns.forEach(([, camp], ci) => {
-                    const orderShare = floorShares[ci];
-                    const revenueShare = ci === campaigns.length - 1
-                        ? totalRevenue - allocatedRevenue
-                        : Math.round(totalRevenue * (camp.totalSpend / totalMarketSpend));
-
-                    // Give all orders to the first ad of this campaign
-                    ads[camp.indices[0]].orders += orderShare;
-                    // Distribute revenue proportionally across ads in this campaign
-                    let campAllocRev = 0;
-                    const campSpend = camp.totalSpend || 1;
-                    camp.indices.forEach((idx, ai) => {
-                        if (ai === camp.indices.length - 1) {
-                            ads[idx].revenue_vnd += (revenueShare - campAllocRev);
-                        } else {
-                            const adRev = Math.round(revenueShare * (ads[idx].spend / campSpend));
-                            ads[idx].revenue_vnd += adRev;
-                            campAllocRev += adRev;
-                        }
-                    });
-                    allocatedRevenue += revenueShare;
-                });
-            } else {
-                // Equal distribution if no spend data
-                let allocated = 0;
-                campaigns.forEach(([, camp], ci) => {
-                    const share = ci === campaigns.length - 1
-                        ? totalOrders - allocated
-                        : Math.floor(totalOrders / campaigns.length);
-                    ads[camp.indices[0]].orders += share;
-                    allocated += share;
-                    const revShare = Math.round(totalRevenue / campaigns.length);
-                    camp.indices.forEach(idx => { ads[idx].revenue_vnd += revShare; });
-                });
-            }
-        });
 
         // ═══ Aggregate totals ═══
         const totalSpend = ads.reduce((s, a) => s + a.spend, 0);
