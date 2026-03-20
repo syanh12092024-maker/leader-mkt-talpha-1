@@ -252,6 +252,19 @@ export default function AdsCommandCenter() {
         "QATAR": "Qatar", "BAHRAIN": "Bahrain",
     };
 
+    // Map POS marketer name (normalized, no diacritics) → campaign key
+    const normName = (s: string) => (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/gi, 'd').toLowerCase().trim();
+    const POS_MARKETER_MAP: Record<string, string> = {
+        [normName("Trần Thế")]: "N.THE",   [normName("Nguyễn Thế")]: "N.THE",
+        [normName("Trần Ngọc Thế")]: "N.THE",
+        [normName("Chu Thuý")]: "C.THUY",   [normName("Chu Thị Thuý")]: "C.THUY",
+        [normName("Sỹ Lộc")]: "LOC",      [normName("Hồ Sỹ Lộc")]: "LOC",
+        [normName("Sỹ Anh")]: "S.ANH",     [normName("Hồ Sỹ Anh")]: "S.ANH",
+        [normName("Thuùy Nhung")]: "NHUNG",  [normName("Hoàng Thị Thuùy Nhung")]: "NHUNG",
+        [normName("Thục Mai")]: "MAI",      [normName("Phạm Hà Thục Mai")]: "MAI",
+        [normName("Thục Bình")]: "BINH",    [normName("Lê Thục Bình")]: "BINH",
+    };
+
     const metaTotals = useMemo(() => {
         const t = filteredAds.reduce((acc: any, a: any) => ({
             spend: acc.spend + a.spend, impressions: acc.impressions + a.impressions,
@@ -294,7 +307,7 @@ export default function AdsCommandCenter() {
     const posBreakdown = useMemo(() => {
         if (!data?.orders) return [];
 
-        // Khi có filter active: chỉ hiện markets của filteredAds
+        const marketerKey = selectedMarketer !== "all" ? selectedMarketer.toUpperCase() : null;
         const targetMarkets = new Set<string>();
         if (hasActiveFilter) {
             filteredAds.forEach((ad: any) => {
@@ -312,14 +325,19 @@ export default function AdsCommandCenter() {
         const map: Record<string, { count: number; revenue: number }> = {};
         data.orders.forEach((o: any) => {
             const shop = o.shop_name || "Khác";
-            // Nếu có filter: chỉ hiện market của campaigns đang chọn
-            if (hasActiveFilter && !targetMarkets.has(shop)) return;
+            if (hasActiveFilter && targetMarkets.size > 0 && !targetMarkets.has(shop)) return;
+            // Option B: filter by marketer when marketer filter active
+            if (marketerKey && marketerKey !== "ALL") {
+                const orderKey = POS_MARKETER_MAP[normName(o.marketer || "")];
+                if (orderKey !== marketerKey) return;
+            }
             if (!map[shop]) map[shop] = { count: 0, revenue: 0 };
             map[shop].count += 1;
             map[shop].revenue += o.total_price_vnd || 0;
         });
         return Object.entries(map).map(([name, v]) => ({ name, ...v })).sort((a, b) => b.revenue - a.revenue);
-    }, [data, filteredAds, hasActiveFilter]);
+    }, [data, filteredAds, hasActiveFilter, selectedMarketer, POS_MARKETER_MAP]);
+
 
 
     const accountIds = Object.keys(ACCOUNT_NAMES);
@@ -352,15 +370,38 @@ export default function AdsCommandCenter() {
         }).sort((a, b) => b.spend - a.spend);
     }, [filteredAds]);
 
-    // POS totals từ table rows → luôn khớp với bảng campaign
+    // ═══ OPTION B: POS tính theo marketer+market (ignore account filter) ═══
+    // POS summary box và bar sẽ hiện đúng theo marketer dù họ dùng nhiều accounts
     const posFromTable = useMemo(() => {
-        const pos_orders = groupedCampaigns.reduce((s, c) => s + (c.pos_orders || 0), 0);
-        const pos_revenue = groupedCampaigns.reduce((s, c) => s + (c.pos_revenue || 0), 0);
+        if (!data?.orders) return { pos_orders: 0, pos_revenue: 0, pos_roas: 0 };
+
+        const marketerKey = selectedMarketer !== "all" ? selectedMarketer.toUpperCase() : null;
+
+        // Markets từ filteredAds (để filter theo country khi country filter active)
+        const targetMarkets = new Set<string>();
+        if (selectedCountry !== "all") {
+            const shopName = MARKET_MAP[selectedCountry.toUpperCase()] || null;
+            if (shopName) targetMarkets.add(shopName);
+        }
+
+        let pos_orders = 0, pos_revenue = 0;
+        data.orders.forEach((o: any) => {
+            // Filter market nếu có country filter
+            if (targetMarkets.size > 0 && !targetMarkets.has(o.shop_name)) return;
+            // Filter marketer nếu có marketer filter
+            if (marketerKey) {
+                const orderKey = POS_MARKETER_MAP[normName(o.marketer || "")];
+                if (orderKey !== marketerKey) return;
+            }
+            pos_orders++;
+            pos_revenue += o.total_price_vnd || 0;
+        });
+
         const total_spend = groupedCampaigns.reduce((s, c) => s + (c.spend || 0), 0);
         return { pos_orders, pos_revenue, pos_roas: total_spend > 0 ? pos_revenue / total_spend : 0 };
-    }, [groupedCampaigns]);
+    }, [data, selectedMarketer, selectedCountry, groupedCampaigns, POS_MARKETER_MAP]);
 
-    // dFinal = d với POS override từ posFromTable khi có filter (summary luôn khớp table)
+    // dFinal = d với POS override từ posFromTable khi có filter
     const dFinal = hasActiveFilter
         ? { ...d, pos_orders: posFromTable.pos_orders, pos_revenue: posFromTable.pos_revenue, pos_roas: posFromTable.pos_roas }
         : d;
