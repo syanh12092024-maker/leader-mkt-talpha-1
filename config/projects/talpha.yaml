@@ -96,7 +96,7 @@ poscake:
 # ─── 5. PANCAKE CRM ───
 pancake:
   api_url: "https://pages.fm/api/v1"
-  api_token: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpbmZvIjp7Im9zIjoxLCJjbGllbnRfaXAiOiIxLjU1LjIxOS4xNSIsImJyb3dzZXIiOjEsImRldmljZV90eXBlIjozfSwibmFtZSI6IlPhu7kgQW5oIiwiZXhwIjoxNzc3ODU5NjA5LCJhcHBsaWNhdGlvbiI6MSwidWlkIjoiNDEyNTEzOWItMWE0Yi00MGMxLTgyNDAtY2FiNjBhNGU4MWIxIiwic2Vzc2lvbl9pZCI6ImJkYTFlZjdmLTI0NTUtNGNkMC05MDE4LTg4MjM2Y2VjYjZjNCIsImlhdCI6MTc3MDA4MzYwOSwiZmJfaWQiOiI3NDk2MzgzMDQ3MzIyMzkiLCJsb2dpbl9zZXNzaW9uIjpudWxsLCJmYl9uYW1lIjoiU-G7uSBBbmgifQ.CmAtmTMuO1IfJ9MBn_8cKPFc-ouPeU5o4XlFehBu5ZQ"
+  api_token: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJuYW1lIjoiU-G7uSBBbmgiLCJleHAiOjE3ODE1OTkyNDksImFwcGxpY2F0aW9uIjoxLCJ1aWQiOiI0MTI1MTM5Yi0xYTRiLTQwYzEtODI0MC1jYWI2MGE0ZTgxYjEiLCJzZXNzaW9uX2lkIjoiMWZkNWI2Y2YtMzhjZS00MGY1LWIxODctNDk3YjdiMDY5OTkxIiwiaWF0IjoxNzczODIzMjQ5LCJmYl9pZCI6Ijc0OTYzODMwNDczMjIzOSIsImxvZ2luX3Nlc3Npb24iOm51bGwsImZiX25hbWUiOiJT4bu5IEFuaCJ9.qJhuBCLDLUAql2ofU2YMBiHTgudXP0ySTu-Bi5hbEcE"
   page_ids:
     - ""                          # CẦN BỔ SUNG nếu có
 

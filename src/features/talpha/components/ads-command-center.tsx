@@ -293,15 +293,34 @@ export default function AdsCommandCenter() {
 
     const posBreakdown = useMemo(() => {
         if (!data?.orders) return [];
+
+        // Khi có filter active: chỉ hiện markets của filteredAds
+        const targetMarkets = new Set<string>();
+        if (hasActiveFilter) {
+            filteredAds.forEach((ad: any) => {
+                const prefix = ad.campaign_name?.split("/")[0]?.trim().toUpperCase();
+                const MARKET_DISPLAY: Record<string, string> = {
+                    "JAPAN": "Japan", "TAIWAN": "Taiwan", "SAUDI": "Saudi",
+                    "UAE": "UAE", "KUWAIT": "Kuwait", "OMAN": "Oman",
+                    "QATAR": "Qatar", "BAHRAIN": "Bahrain",
+                };
+                const marketName = MARKET_DISPLAY[prefix || ""];
+                if (marketName) targetMarkets.add(marketName);
+            });
+        }
+
         const map: Record<string, { count: number; revenue: number }> = {};
         data.orders.forEach((o: any) => {
             const shop = o.shop_name || "Khác";
+            // Nếu có filter: chỉ hiện market của campaigns đang chọn
+            if (hasActiveFilter && !targetMarkets.has(shop)) return;
             if (!map[shop]) map[shop] = { count: 0, revenue: 0 };
             map[shop].count += 1;
             map[shop].revenue += o.total_price_vnd || 0;
         });
         return Object.entries(map).map(([name, v]) => ({ name, ...v })).sort((a, b) => b.revenue - a.revenue);
-    }, [data]);
+    }, [data, filteredAds, hasActiveFilter]);
+
 
     const accountIds = Object.keys(ACCOUNT_NAMES);
     const filteredAccountIds = accountSearch
@@ -332,6 +351,19 @@ export default function AdsCommandCenter() {
             };
         }).sort((a, b) => b.spend - a.spend);
     }, [filteredAds]);
+
+    // POS totals từ table rows → luôn khớp với bảng campaign
+    const posFromTable = useMemo(() => {
+        const pos_orders = groupedCampaigns.reduce((s, c) => s + (c.pos_orders || 0), 0);
+        const pos_revenue = groupedCampaigns.reduce((s, c) => s + (c.pos_revenue || 0), 0);
+        const total_spend = groupedCampaigns.reduce((s, c) => s + (c.spend || 0), 0);
+        return { pos_orders, pos_revenue, pos_roas: total_spend > 0 ? pos_revenue / total_spend : 0 };
+    }, [groupedCampaigns]);
+
+    // dFinal = d với POS override từ posFromTable khi có filter (summary luôn khớp table)
+    const dFinal = hasActiveFilter
+        ? { ...d, pos_orders: posFromTable.pos_orders, pos_revenue: posFromTable.pos_revenue, pos_roas: posFromTable.pos_roas }
+        : d;
 
     const syncToSheet = async () => {
         if (!data) return;
@@ -723,11 +755,11 @@ export default function AdsCommandCenter() {
                     <div className="grid grid-cols-2 divide-x divide-slate-100">
                         <div className="px-3 py-2">
                             <p className="text-[7px] text-slate-400 uppercase font-bold tracking-wider">Đơn</p>
-                            <p className="text-base font-black font-mono text-red-600 leading-tight">{d.pos_orders}</p>
+                            <p className="text-base font-black font-mono text-red-600 leading-tight">{dFinal.pos_orders}</p>
                         </div>
                         <div className="px-3 py-2">
                             <p className="text-[7px] text-slate-400 uppercase font-bold tracking-wider">Doanh thu</p>
-                            <p className="text-base font-black font-mono text-slate-800 leading-tight">{formatVNDCompact(d.pos_revenue)}</p>
+                            <p className="text-base font-black font-mono text-slate-800 leading-tight">{formatVNDCompact(dFinal.pos_revenue)}</p>
                         </div>
                     </div>
                 </div>
