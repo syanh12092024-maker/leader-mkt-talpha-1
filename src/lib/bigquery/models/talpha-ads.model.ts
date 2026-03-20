@@ -9,6 +9,7 @@ export interface TAlphaConfig {
     meta_ads: { access_token: string; ad_account_ids: string[] };
     poscake: { shops: Array<{ name: string; api_url: string; api_key: string; shop_id: string }>; shop_ids: string[] };
     exchange_rates: Array<{ from: string; to: string; rate: number }>;
+    marketer_map?: Array<{ pos_name: string; campaign_key: string }>;
 }
 
 export interface TAlphaOrder {
@@ -272,8 +273,23 @@ export class TAlphaAdsModel {
         return this.MARKET_MAP[prefix] || null;
     }
 
+    // Normalize tên để so sánh: bỏ dấu, lowercase, bỏ khoảng trắng thừa
+    private static normalizeName(name: string): string {
+        return (name || '')
+            .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+            .replace(/đ/gi, 'd')
+            .toLowerCase().trim();
+    }
+
     static aggregate(ads: any[], orders: TAlphaOrder[]) {
-        // ═══ PASS 1: Match POS orders by ad_id (works for GCC markets) ═══
+        // Load marketer_map từ config
+        const cfg = this.loadConfig();
+        const marketerMap: Record<string, string> = {}; // pos_name (normalized) → campaign_key (upper)
+        (cfg.marketer_map || []).forEach(m => {
+            marketerMap[this.normalizeName(m.pos_name)] = m.campaign_key.toUpperCase();
+        });
+
+        // ═══ PASS 1: Match POS orders by ad_id ═══
         const adIdMap = new Map<string, number>();
         ads.forEach((ad, idx) => { if (ad.ad_id) adIdMap.set(String(ad.ad_id), idx); });
 
@@ -288,6 +304,37 @@ export class TAlphaAdsModel {
                 matchedOrderIds.add(order.id);
             }
         });
+
+        // ═══ PASS 1.5: Match unmatched orders by marketer name ═══
+        // Cho đơn không có ad_id nhưng có marketer name → tìm campaign của marketer đó
+        if (Object.keys(marketerMap).length > 0) {
+            orders.forEach(order => {
+                if (matchedOrderIds.has(order.id)) return; // đã match rồi
+                if (!order.marketer || order.marketer === 'N/A') return;
+
+                const campaignKey = marketerMap[this.normalizeName(order.marketer)];
+                if (!campaignKey) return; // không có trong map
+
+                const market = order.shop_name; // e.g. "Saudi"
+
+                // Tìm ad có cùng market + marketer campaign_key + spend cao nhất
+                let bestIdx = -1, bestSpend = -1;
+                ads.forEach((ad, idx) => {
+                    const adMarket = this.getCampaignMarket(ad.campaign_name);
+                    const adKey = (ad.campaign_name || '').split('/')[1]?.trim().toUpperCase() || '';
+                    if (adMarket === market && adKey === campaignKey && ad.spend > bestSpend) {
+                        bestIdx = idx;
+                        bestSpend = ad.spend;
+                    }
+                });
+
+                if (bestIdx >= 0) {
+                    ads[bestIdx].orders += 1;
+                    ads[bestIdx].revenue_vnd += order.total_price_vnd;
+                    matchedOrderIds.add(order.id);
+                }
+            });
+        }
 
         // ═══ PASS 2: Market-based fallback for unmatched orders ═══
         // Group unmatched orders by shop_name (market)

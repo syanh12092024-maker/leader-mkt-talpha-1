@@ -231,6 +231,41 @@ marketers:
     name: "Lê Thục Bình"
     role: "Marketer"
 
+# ─── 10b. POS MARKETER MAP ───
+# Ánh xạ tên marketer trong POS Cake → campaign key (phần [1] trong campaign name)
+marketer_map:
+  - pos_name: "Trần Thế"
+    campaign_key: "N.THE"
+  - pos_name: "Nguyễn Thế"
+    campaign_key: "N.THE"
+  - pos_name: "Trần Ngọc Thế"
+    campaign_key: "N.THE"
+  - pos_name: "Chu Thúy"
+    campaign_key: "C.THUY"
+  - pos_name: "Chu Thị Thuý"
+    campaign_key: "C.THUY"
+  - pos_name: "Sỹ Lộc"
+    campaign_key: "LOC"
+  - pos_name: "Hồ Sỹ Lộc"
+    campaign_key: "LOC"
+  - pos_name: "Sỹ Anh"
+    campaign_key: "S.ANH"
+  - pos_name: "Hồ Sỹ Anh"
+    campaign_key: "S.ANH"
+  - pos_name: "Thuỳ Nhung"
+    campaign_key: "NHUNG"
+  - pos_name: "Hoàng Thị Thuỳ Nhung"
+    campaign_key: "NHUNG"
+  - pos_name: "Thục Mai"
+    campaign_key: "MAI"
+  - pos_name: "Phạm Hà Thục Mai"
+    campaign_key: "MAI"
+  - pos_name: "Thục Bình"
+    campaign_key: "BINH"
+  - pos_name: "Lê Thục Bình"
+    campaign_key: "BINH"
+
+
 # ─── 10. SẢN PHẨM + GIÁ VỐN (valid_from: 2026-02-01) ───
 products:
   - sku: "005"
