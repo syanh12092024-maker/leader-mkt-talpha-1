@@ -446,9 +446,10 @@ export default function AdsCommandCenter() {
     }
 
     return (
-        <div className="flex flex-col gap-2 w-full px-0">
+        <div className="h-full flex flex-col gap-2 w-full overflow-hidden">
             {/* ═══ HEADER ═══ */}
-            <header className="flex items-center justify-between bg-white px-4 py-2.5 rounded-xl shadow-sm border border-slate-100">
+            <header className="flex-shrink-0 flex items-center justify-between bg-white px-4 py-2.5 rounded-xl shadow-sm border border-slate-100">
+
                 <div className="flex items-center gap-2">
                     <div className="p-1.5 bg-blue-500/10 rounded-lg text-blue-500"><Satellite className="w-3.5 h-3.5" /></div>
                     <div>
@@ -587,7 +588,8 @@ export default function AdsCommandCenter() {
             </header>
 
             {/* ═══ FILTER PILL BAR ═══ */}
-            <div className="flex items-center gap-1.5 bg-white px-3 py-1.5 rounded-lg shadow-sm border border-slate-100 flex-wrap">
+            <div className="flex-shrink-0 flex items-center gap-1.5 bg-white px-3 py-1.5 rounded-lg shadow-sm border border-slate-100 flex-wrap">
+
                 {/* ── Country Filter ── */}
                 <div className="relative" ref={countryRef}>
                     <button onClick={() => setIsCountryOpen(!isCountryOpen)}
@@ -782,7 +784,7 @@ export default function AdsCommandCenter() {
             )}
 
             {/* ═══ CAMPAIGN TABLE ═══ */}
-            <section className="bg-white rounded-xl shadow-sm border border-slate-100 flex-1 min-h-0 flex flex-col">
+            <section className="bg-white rounded-xl shadow-sm border border-slate-100 flex-1 min-h-0 flex flex-col overflow-hidden">
                 <div className="px-4 py-2.5 border-b border-slate-100 flex items-center justify-between flex-shrink-0">
                     <h2 className="text-xs font-bold text-slate-800 flex items-center gap-2">
                         <Activity className="w-3.5 h-3.5 text-blue-500" /> Chi tiết theo chiến dịch
