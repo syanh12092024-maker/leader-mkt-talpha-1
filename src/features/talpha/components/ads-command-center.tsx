@@ -257,48 +257,10 @@ export default function AdsCommandCenter() {
             spend: acc.spend + a.spend, impressions: acc.impressions + a.impressions,
             reach: acc.reach + a.reach, messages: acc.messages + a.messages,
             purchases: acc.purchases + a.purchases, conversion_value: acc.conversion_value + a.conversion_value,
-            comments: acc.comments + a.comments, pos_orders: acc.pos_orders + (a.orders || 0),
+            comments: acc.comments + a.comments,
+            pos_orders: acc.pos_orders + (a.orders || 0),
             pos_revenue: acc.pos_revenue + (a.revenue_vnd || 0),
         }), { spend: 0, impressions: 0, reach: 0, messages: 0, purchases: 0, conversion_value: 0, comments: 0, pos_orders: 0, pos_revenue: 0 });
-
-        // Calculate POS from raw orders when any filter is active
-        if (hasActiveFilter && data?.orders) {
-            const targetMarkets = new Set<string>();
-            filteredAds.forEach((ad: any) => {
-                const prefix = ad.campaign_name?.split("/")[0]?.trim().toUpperCase();
-                if (prefix && MARKET_MAP[prefix]) targetMarkets.add(MARKET_MAP[prefix]);
-            });
-
-            // Get set of marketer names from filtered ads (for marketer-level filtering)
-            const targetMarketerNames = new Set<string>();
-            if (selectedMarketer !== "all") {
-                filteredAds.forEach((ad: any) => {
-                    const mktRaw = ad.campaign_name?.split("/")[1]?.trim() || "";
-                    if (mktRaw) targetMarketerNames.add(mktRaw.toLowerCase());
-                });
-            }
-
-            let posOrders = 0, posRevenue = 0;
-            data.orders.forEach((o: any) => {
-                if (!targetMarkets.has(o.shop_name)) return;
-                // If marketer filter active, match by order's marketer field
-                if (selectedMarketer !== "all" && targetMarketerNames.size > 0) {
-                    const orderMkt = (o.marketer || "").toLowerCase();
-                    if (!Array.from(targetMarketerNames).some(m => orderMkt.includes(m) || m.includes(orderMkt))) return;
-                }
-                posOrders++;
-                posRevenue += o.total_price_vnd || 0;
-            });
-
-            // Fallback: if no orders match with marketer filter, use market-only count
-            if (posOrders === 0 && selectedMarketer !== "all") {
-                data.orders.forEach((o: any) => {
-                    if (targetMarkets.has(o.shop_name)) { posOrders++; posRevenue += o.total_price_vnd || 0; }
-                });
-            }
-
-            if (posOrders > 0) { t.pos_orders = posOrders; t.pos_revenue = posRevenue; }
-        }
 
         return {
             ...t,
@@ -309,7 +271,7 @@ export default function AdsCommandCenter() {
             roas: t.spend > 0 ? t.conversion_value / t.spend : 0,
             pos_roas: t.spend > 0 ? t.pos_revenue / t.spend : 0,
         };
-    }, [filteredAds, data, selectedAccount, selectedMarketer]);
+    }, [filteredAds]);
 
     const emptyD = {
         spend: 0, impressions: 0, reach: 0, messages: 0, purchases: 0, conversion_value: 0,
