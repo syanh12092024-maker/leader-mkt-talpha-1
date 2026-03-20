@@ -386,7 +386,7 @@ export default function AdsCommandCenter() {
     }
 
     return (
-        <div className="flex flex-col gap-2 w-full">
+        <div className="flex flex-col gap-2 w-full px-0">
             {/* ═══ HEADER ═══ */}
             <header className="flex items-center justify-between bg-white px-4 py-2.5 rounded-xl shadow-sm border border-slate-100">
                 <div className="flex items-center gap-2">
@@ -733,7 +733,7 @@ export default function AdsCommandCenter() {
                     <div className="bg-red-500 px-3 py-1.5">
                         <span className="text-[8px] font-extrabold text-white uppercase tracking-widest">🛒 POS — Đơn hàng thực</span>
                     </div>
-                    <div className="grid grid-cols-3 divide-x divide-slate-100">
+                    <div className="grid grid-cols-2 divide-x divide-slate-100">
                         <div className="px-3 py-2">
                             <p className="text-[7px] text-slate-400 uppercase font-bold tracking-wider">Đơn</p>
                             <p className="text-base font-black font-mono text-red-600 leading-tight">{d.pos_orders}</p>
@@ -741,10 +741,6 @@ export default function AdsCommandCenter() {
                         <div className="px-3 py-2">
                             <p className="text-[7px] text-slate-400 uppercase font-bold tracking-wider">Doanh thu</p>
                             <p className="text-base font-black font-mono text-slate-800 leading-tight">{formatVNDCompact(d.pos_revenue)}</p>
-                        </div>
-                        <div className="px-3 py-2">
-                            <p className="text-[7px] text-slate-400 uppercase font-bold tracking-wider">ROAS</p>
-                            <p className={cn("text-base font-black font-mono leading-tight", d.pos_roas >= 2 ? "text-emerald-600" : d.pos_roas >= 1 ? "text-red-600" : "text-red-400")}>{d.pos_roas.toFixed(2)}x</p>
                         </div>
                     </div>
                 </div>
@@ -817,15 +813,15 @@ export default function AdsCommandCenter() {
                                     Trạng thái
                                 </th>
                                 {/* META ADS — Blue header */}
-                                <th colSpan={6} className="text-center px-1 py-1.5 text-[9px] font-extrabold text-white uppercase tracking-wide bg-blue-600 border-b border-blue-700" style={{ borderTopLeftRadius: "4px" }}>
+                                <th colSpan={4} className="text-center px-1 py-1.5 text-[9px] font-extrabold text-white uppercase tracking-wide bg-blue-600 border-b border-blue-700" style={{ borderTopLeftRadius: "4px" }}>
                                     📊 META ADS — QUẢNG CÁO
                                 </th>
-                                {/* POS — Red/Orange header — NOW SECOND */}
+                                {/* POS — Red/Orange header */}
                                 <th colSpan={3} className="text-center px-1 py-1.5 text-[9px] font-extrabold text-white uppercase tracking-wide bg-red-500 border-b border-red-600">
                                     🛒 POS — ĐƠN HÀNG THỰC
                                 </th>
-                                {/* TƯƠNG TÁC — Slate/Gray header — NOW LAST */}
-                                <th colSpan={4} className="text-center px-1 py-1.5 text-[9px] font-extrabold text-white uppercase tracking-wide bg-slate-500 border-b border-slate-600" style={{ borderTopRightRadius: "4px" }}>
+                                {/* TƯƠNG TÁC — Slate/Gray header */}
+                                <th colSpan={3} className="text-center px-1 py-1.5 text-[9px] font-extrabold text-white uppercase tracking-wide bg-slate-500 border-b border-slate-600" style={{ borderTopRightRadius: "4px" }}>
                                     💬 TƯƠNG TÁC & HIỂN THỊ
                                 </th>
                             </tr>
@@ -835,9 +831,7 @@ export default function AdsCommandCenter() {
                                 <th className="text-right px-1.5 py-1.5 font-bold text-blue-700 bg-blue-50">Chi phí</th>
                                 <th className="text-right px-1.5 py-1.5 font-bold text-blue-700 bg-blue-50">Lượt mua</th>
                                 <th className="text-right px-1.5 py-1.5 font-bold text-blue-700 bg-blue-50">CP / mua</th>
-                                <th className="text-right px-1.5 py-1.5 font-bold text-blue-700 bg-blue-50">GT chuyển đổi</th>
-                                <th className="text-right px-1.5 py-1.5 font-bold text-blue-700 bg-blue-50">ROAS</th>
-                                <th className="text-right px-1.5 py-1.5 font-bold text-blue-700 bg-blue-50 border-r border-blue-200">CPM</th>
+                                <th className="text-right px-1.5 py-1.5 font-bold text-blue-700 bg-blue-50 border-r border-blue-200">GT chuyển đổi</th>
                                 {/* POS sub-columns — light red bg */}
                                 <th className="text-right px-1.5 py-1.5 font-bold text-red-700 bg-red-50">Đơn POS</th>
                                 <th className="text-right px-1.5 py-1.5 font-bold text-red-700 bg-red-50">DT POS</th>
@@ -845,8 +839,7 @@ export default function AdsCommandCenter() {
                                 {/* Tương tác sub-columns — light gray bg */}
                                 <th className="text-right px-1.5 py-1.5 font-bold text-slate-600 bg-slate-50">Tin nhắn</th>
                                 <th className="text-right px-1.5 py-1.5 font-bold text-slate-600 bg-slate-50">CP / nhắn</th>
-                                <th className="text-right px-1.5 py-1.5 font-bold text-slate-600 bg-slate-50">Bình luận</th>
-                                <th className="text-right pr-4 pl-1.5 py-1.5 font-bold text-slate-600 bg-slate-50">Tần suất</th>
+                                <th className="text-right pr-4 pl-1.5 py-1.5 font-bold text-slate-600 bg-slate-50">Bình luận</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-50">
@@ -885,28 +878,22 @@ export default function AdsCommandCenter() {
                                         <td className="px-1.5 py-2 text-right font-mono text-slate-700 font-semibold whitespace-nowrap">{formatVNDCompact(c.spend)}</td>
                                         <td className="px-1.5 py-2 text-right font-mono font-bold text-blue-600">{c.purchases || "—"}</td>
                                         <td className="px-1.5 py-2 text-right font-mono text-slate-500 whitespace-nowrap">{cpp > 0 ? formatVNDCompact(cpp) : "—"}</td>
-                                        <td className="px-1.5 py-2 text-right font-mono text-blue-600 font-medium whitespace-nowrap">{c.conversion_value > 0 ? formatVNDCompact(c.conversion_value) : "—"}</td>
-                                        <td className={cn("px-1.5 py-2 text-right font-mono font-bold whitespace-nowrap",
-                                            roas >= 3 ? "text-blue-600" : roas >= 1 ? "text-slate-600" : "text-red-500")}>
-                                            {roas > 0 ? `${roas.toFixed(1)}x` : "—"}
-                                        </td>
-                                        <td className="px-1.5 py-2 text-right font-mono text-slate-500 whitespace-nowrap border-r border-slate-100">{cpm > 0 ? formatVNDCompact(cpm) : "—"}</td>
-                                        {/* ── POS COLUMNS (now second) ── */}
+                                        <td className="px-1.5 py-2 text-right font-mono text-blue-600 font-medium whitespace-nowrap border-r border-slate-100">{c.conversion_value > 0 ? formatVNDCompact(c.conversion_value) : "—"}</td>
+                                        {/* ── POS COLUMNS ── */}
                                         <td className="px-1.5 py-2 text-right font-mono font-bold text-red-600 bg-red-50/30">{c.pos_orders || "—"}</td>
                                         <td className="px-1.5 py-2 text-right font-mono text-red-600 font-medium whitespace-nowrap bg-red-50/30">{c.pos_revenue > 0 ? formatVNDCompact(c.pos_revenue) : "—"}</td>
                                         <td className={cn("px-1.5 py-2 text-right font-mono font-bold whitespace-nowrap bg-red-50/30 border-r border-slate-100",
                                             posRoas >= 3 ? "text-emerald-600" : posRoas >= 1 ? "text-red-600" : "text-red-400")}>
                                             {posRoas > 0 ? `${posRoas.toFixed(1)}x` : "—"}
                                         </td>
-                                        {/* ── TƯƠNG TÁC COLUMNS (now last) ── */}
+                                        {/* ── TƯƠNG TÁC COLUMNS ── */}
                                         <td className="px-1.5 py-2 text-right font-mono text-slate-600">{c.messages || "—"}</td>
                                         <td className="px-1.5 py-2 text-right font-mono text-slate-500 whitespace-nowrap">{cpcMsg > 0 ? formatVNDCompact(cpcMsg) : "—"}</td>
-                                        <td className="px-1.5 py-2 text-right font-mono text-slate-500">{c.comments || "—"}</td>
-                                        <td className="pr-4 pl-1.5 py-2 text-right font-mono text-slate-400">{freq > 0 ? freq.toFixed(1) : "—"}</td>
+                                        <td className="pr-4 pl-1.5 py-2 text-right font-mono text-slate-500">{c.comments || "—"}</td>
                                     </tr>
                                 );
                             }) : (
-                                <tr><td colSpan={14} className="py-12 text-center text-slate-400 italic text-xs">
+                                <tr><td colSpan={12} className="py-12 text-center text-slate-400 italic text-xs">
                                     {loading ? "Đang tải dữ liệu..." : `Không có dữ liệu cho ngày ${fromDate}`}
                                 </td></tr>
                             )}
