@@ -38,3 +38,4 @@ coverage/
 # .cursorrules     <- KEEP
 # docs/            <- KEEP
 .vercel
+config/bigquery-key.json
