@@ -76,6 +76,30 @@ export class TAlphaAdsModel {
     }
 
     /**
+     * Fetch all ads (catalog) for an account — no date filter.
+     * Returns: ad_id → { campaign_id, campaign_name, account_id }
+     * Used to match POS orders even when the ad has no spend today.
+     */
+    static async fetchAdCatalog(accId: string, access_token: string): Promise<Record<string, { campaign_id: string; campaign_name: string; account_id: string }>> {
+        const catalog: Record<string, { campaign_id: string; campaign_name: string; account_id: string }> = {};
+        try {
+            const url = `https://graph.facebook.com/v21.0/${accId}/ads?fields=id,campaign_id,campaign{id,name}&limit=500&access_token=${access_token}`;
+            const rows = await this.fetchAllPages(url);
+            rows.forEach((row: any) => {
+                const adId = String(row.id || '');
+                const campaignId = String(row.campaign_id || row.campaign?.id || '');
+                const campaignName = row.campaign?.name || '';
+                if (adId && campaignId) {
+                    catalog[adId] = { campaign_id: campaignId, campaign_name: campaignName, account_id: accId };
+                }
+            });
+        } catch (e) {
+            console.error(`Ad catalog Error (${accId}):`, e);
+        }
+        return catalog;
+    }
+
+    /**
      * Fetch Meta Ads with ALL required metrics:
      * spend, purchases, conversion_value, messages, comments,
      * impressions, reach (for CPM, frequency, ROAS calculation)
@@ -84,6 +108,7 @@ export class TAlphaAdsModel {
         const cfg = this.loadConfig();
         const { access_token, ad_account_ids } = cfg.meta_ads;
         const allAds: any[] = [];
+        const allCatalog: Record<string, { campaign_id: string; campaign_name: string; account_id: string }> = {};
         const timeRange = `&time_range=${encodeURIComponent(JSON.stringify({ since: fromDate, until: toDate }))}`;
 
         // Fields to request from Meta API
@@ -97,12 +122,15 @@ export class TAlphaAdsModel {
             try {
                 const url = `https://graph.facebook.com/v21.0/${accId}/insights?fields=${fields}&level=ad&limit=500${timeRange}&access_token=${access_token}`;
 
-                // Fetch campaign statuses in parallel
+                // Fetch campaign statuses + ad catalog in parallel
                 const campaignStatusUrl = `https://graph.facebook.com/v21.0/${accId}/campaigns?fields=id,effective_status&limit=500&access_token=${access_token}`;
                 const [rows, campaignRows] = await Promise.all([
                     this.fetchAllPages(url),
                     this.fetchAllPages(campaignStatusUrl),
                 ]);
+                // Merge catalog for this account
+                const catalog = await this.fetchAdCatalog(accId, access_token);
+                Object.assign(allCatalog, catalog);
 
                 // Build campaign_id → effective_status map
                 const statusMap: Record<string, string> = {};
@@ -206,7 +234,7 @@ export class TAlphaAdsModel {
                 console.error(`Meta Ads Error (${accId}):`, e);
             }
         }));
-        return allAds;
+        return { ads: allAds, catalog: allCatalog };
     }
 
     static async fetchPOSHybrid(fromDate: string, toDate: string): Promise<TAlphaOrder[]> {
@@ -281,7 +309,7 @@ export class TAlphaAdsModel {
             .toLowerCase().trim();
     }
 
-    static aggregate(ads: any[], orders: TAlphaOrder[]) {
+    static aggregate(ads: any[], orders: TAlphaOrder[], catalog?: Record<string, { campaign_id: string; campaign_name: string; account_id: string }>) {
         // Load marketer_map từ config
         const cfg = this.loadConfig();
         const marketerMap: Record<string, string> = {}; // pos_name (normalized) → campaign_key (upper)
@@ -290,18 +318,44 @@ export class TAlphaAdsModel {
         });
 
         // ═══ PASS 1: Match POS orders by ad_id ═══
+        // Primary map: ad_id → index in today's ads (has spend data)
         const adIdMap = new Map<string, number>();
         ads.forEach((ad, idx) => { if (ad.ad_id) adIdMap.set(String(ad.ad_id), idx); });
+
+        // Secondary map: campaign_id → best spending ad index (for catalog fallback)
+        // When an order's ad_id is in catalog but not in today's ads, route to the campaign's best ad
+        const campaignBestAdIdx = new Map<string, number>(); // campaign_id → idx of highest-spend ad
+        ads.forEach((ad, idx) => {
+            const cid = String(ad.campaign_id || '');
+            if (!cid) return;
+            const existing = campaignBestAdIdx.get(cid);
+            if (existing === undefined || ads[idx].spend > ads[existing].spend) {
+                campaignBestAdIdx.set(cid, idx);
+            }
+        });
 
         const matchedOrderIds = new Set<string>();
 
         orders.forEach(order => {
             const adId = order.ad_id ? String(order.ad_id) : null;
-            if (adId && adIdMap.has(adId)) {
+            if (!adId) return;
+
+            if (adIdMap.has(adId)) {
+                // Direct match: ad has spend today
                 const idx = adIdMap.get(adId)!;
                 ads[idx].orders += 1;
                 ads[idx].revenue_vnd += order.total_price_vnd;
                 matchedOrderIds.add(order.id);
+            } else if (catalog && catalog[adId]) {
+                // Catalog fallback: ad doesn't have spend today, but belongs to a known campaign
+                const { campaign_id } = catalog[adId];
+                const bestIdx = campaignBestAdIdx.get(String(campaign_id));
+                if (bestIdx !== undefined) {
+                    ads[bestIdx].orders += 1;
+                    ads[bestIdx].revenue_vnd += order.total_price_vnd;
+                    matchedOrderIds.add(order.id);
+                    console.log(`[POS catalog] Order ${order.id} ad_id=${adId} → campaign ${campaign_id} (catalog fallback)`);
+                }
             }
         });
 
