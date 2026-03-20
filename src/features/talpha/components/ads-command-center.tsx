@@ -304,42 +304,6 @@ export default function AdsCommandCenter() {
         return [...new Set(data.ads.map((a: any) => a.account_id))];
     }, [data]);
 
-    const posBreakdown = useMemo(() => {
-        if (!data?.orders) return [];
-
-        const marketerKey = selectedMarketer !== "all" ? selectedMarketer.toUpperCase() : null;
-        const targetMarkets = new Set<string>();
-        if (hasActiveFilter) {
-            filteredAds.forEach((ad: any) => {
-                const prefix = ad.campaign_name?.split("/")[0]?.trim().toUpperCase();
-                const MARKET_DISPLAY: Record<string, string> = {
-                    "JAPAN": "Japan", "TAIWAN": "Taiwan", "SAUDI": "Saudi",
-                    "UAE": "UAE", "KUWAIT": "Kuwait", "OMAN": "Oman",
-                    "QATAR": "Qatar", "BAHRAIN": "Bahrain",
-                };
-                const marketName = MARKET_DISPLAY[prefix || ""];
-                if (marketName) targetMarkets.add(marketName);
-            });
-        }
-
-        const map: Record<string, { count: number; revenue: number }> = {};
-        data.orders.forEach((o: any) => {
-            const shop = o.shop_name || "Khác";
-            if (hasActiveFilter && targetMarkets.size > 0 && !targetMarkets.has(shop)) return;
-            // Option B: filter by marketer when marketer filter active
-            if (marketerKey && marketerKey !== "ALL") {
-                const orderKey = POS_MARKETER_MAP[normName(o.marketer || "")];
-                if (orderKey !== marketerKey) return;
-            }
-            if (!map[shop]) map[shop] = { count: 0, revenue: 0 };
-            map[shop].count += 1;
-            map[shop].revenue += o.total_price_vnd || 0;
-        });
-        return Object.entries(map).map(([name, v]) => ({ name, ...v })).sort((a, b) => b.revenue - a.revenue);
-    }, [data, filteredAds, hasActiveFilter, selectedMarketer, POS_MARKETER_MAP]);
-
-
-
     const accountIds = Object.keys(ACCOUNT_NAMES);
     const filteredAccountIds = accountSearch
         ? accountIds.filter(id => getAccountName(id).toLowerCase().includes(accountSearch.toLowerCase()))
@@ -370,38 +334,35 @@ export default function AdsCommandCenter() {
         }).sort((a, b) => b.spend - a.spend);
     }, [filteredAds]);
 
-    // ═══ OPTION B: POS tính theo marketer+market (ignore account filter) ═══
-    // POS summary box và bar sẽ hiện đúng theo marketer dù họ dùng nhiều accounts
+    // ═══ posFromTable: Tính từ groupedCampaigns → luôn khớp với table ═══
+    // Attribution logic: ad_id (Pass 1) + marketer name (Pass 1.5) đã xử lý ở model
+    // Summary box phải bằng tổng table rows để không gây nhầm lẫn
     const posFromTable = useMemo(() => {
-        if (!data?.orders) return { pos_orders: 0, pos_revenue: 0, pos_roas: 0 };
-
-        const marketerKey = selectedMarketer !== "all" ? selectedMarketer.toUpperCase() : null;
-
-        // Markets từ filteredAds (để filter theo country khi country filter active)
-        const targetMarkets = new Set<string>();
-        if (selectedCountry !== "all") {
-            const shopName = MARKET_MAP[selectedCountry.toUpperCase()] || null;
-            if (shopName) targetMarkets.add(shopName);
-        }
-
-        let pos_orders = 0, pos_revenue = 0;
-        data.orders.forEach((o: any) => {
-            // Filter market nếu có country filter
-            if (targetMarkets.size > 0 && !targetMarkets.has(o.shop_name)) return;
-            // Filter marketer nếu có marketer filter
-            if (marketerKey) {
-                const orderKey = POS_MARKETER_MAP[normName(o.marketer || "")];
-                if (orderKey !== marketerKey) return;
-            }
-            pos_orders++;
-            pos_revenue += o.total_price_vnd || 0;
-        });
-
+        const pos_orders = groupedCampaigns.reduce((s, c) => s + (c.pos_orders || 0), 0);
+        const pos_revenue = groupedCampaigns.reduce((s, c) => s + (c.pos_revenue || 0), 0);
         const total_spend = groupedCampaigns.reduce((s, c) => s + (c.spend || 0), 0);
         return { pos_orders, pos_revenue, pos_roas: total_spend > 0 ? pos_revenue / total_spend : 0 };
-    }, [data, selectedMarketer, selectedCountry, groupedCampaigns, POS_MARKETER_MAP]);
+    }, [groupedCampaigns]);
 
-    // dFinal = d với POS override từ posFromTable khi có filter
+    // posBreakdown: nhóm theo market từ groupedCampaigns → luôn khớp với table
+    const posBreakdown = useMemo(() => {
+        const map: Record<string, { count: number; revenue: number }> = {};
+        groupedCampaigns.forEach((c) => {
+            if (!c.pos_orders && !c.pos_revenue) return;
+            const prefix = (c.campaign_name || '').split('/')[0]?.trim().toUpperCase();
+            const MARKET_DISPLAY: Record<string, string> = {
+                "JAPAN": "Japan", "TAIWAN": "Taiwan", "SAUDI": "Saudi",
+                "UAE": "UAE", "KUWAIT": "Kuwait", "OMAN": "Oman",
+                "QATAR": "Qatar", "BAHRAIN": "Bahrain",
+            };
+            const market = MARKET_DISPLAY[prefix] || prefix;
+            if (!map[market]) map[market] = { count: 0, revenue: 0 };
+            map[market].count += c.pos_orders || 0;
+            map[market].revenue += c.pos_revenue || 0;
+        });
+        return Object.entries(map).map(([name, v]) => ({ name, ...v })).sort((a, b) => b.revenue - a.revenue);
+    }, [groupedCampaigns]);
+
     const dFinal = hasActiveFilter
         ? { ...d, pos_orders: posFromTable.pos_orders, pos_revenue: posFromTable.pos_revenue, pos_roas: posFromTable.pos_roas }
         : d;
