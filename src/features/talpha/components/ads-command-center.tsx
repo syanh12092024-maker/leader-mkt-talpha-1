@@ -764,73 +764,6 @@ export default function AdsCommandCenter() {
 
                 <span className="text-[9px] text-slate-400 ml-auto font-mono">{filteredAds.length} / {data?.ads?.length || 0} ads</span>
             </div>
-            <div className="grid grid-cols-12 gap-2">
-                {/* ── SECTION 1: META ADS (Blue) ── */}
-                <div className="col-span-5 bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
-                    <div className="bg-blue-600 px-3 py-1.5">
-                        <span className="text-[8px] font-extrabold text-white uppercase tracking-widest">📊 Meta Ads — Quảng cáo</span>
-                    </div>
-                    <div className="grid grid-cols-3 divide-x divide-slate-100">
-                        <div className="px-3 py-2">
-                            <p className="text-[7px] text-slate-400 uppercase font-bold tracking-wider">Chi phí</p>
-                            <p className="text-base font-black font-mono text-slate-800 leading-tight">{formatVNDCompact(d.spend)}</p>
-                        </div>
-                        <div className="px-3 py-2">
-                            <p className="text-[7px] text-slate-400 uppercase font-bold tracking-wider">Lượt mua</p>
-                            <p className="text-base font-black font-mono text-slate-800 leading-tight">{d.purchases}</p>
-                            <p className="text-[8px] text-slate-400">CP: {formatVNDCompact(d.cost_per_purchase)}</p>
-                        </div>
-                        <div className="px-3 py-2">
-                            <p className="text-[7px] text-slate-400 uppercase font-bold tracking-wider">GT Chuyển đổi</p>
-                            <p className="text-base font-black font-mono text-slate-800 leading-tight">{formatVNDCompact(d.conversion_value)}</p>
-                            <p className="text-[8px] text-blue-500 font-bold">ROAS: {d.roas.toFixed(2)}x</p>
-                        </div>
-                    </div>
-                </div>
-
-                {/* ── SECTION 2: POS (Red) ── */}
-                <div className="col-span-3 bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
-                    <div className="bg-red-500 px-3 py-1.5">
-                        <span className="text-[8px] font-extrabold text-white uppercase tracking-widest">🛒 POS — Đơn hàng thực</span>
-                    </div>
-                    <div className="grid grid-cols-2 divide-x divide-slate-100">
-                        <div className="px-3 py-2">
-                            <p className="text-[7px] text-slate-400 uppercase font-bold tracking-wider">Đơn</p>
-                            <p className="text-base font-black font-mono text-red-600 leading-tight">{dFinal.pos_orders}</p>
-                        </div>
-                        <div className="px-3 py-2">
-                            <p className="text-[7px] text-slate-400 uppercase font-bold tracking-wider">Doanh thu</p>
-                            <p className="text-base font-black font-mono text-slate-800 leading-tight">{formatVNDCompact(dFinal.pos_revenue)}</p>
-                        </div>
-                    </div>
-                </div>
-
-                {/* ── SECTION 3: Tương tác (Slate) ── */}
-                <div className="col-span-4 bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
-                    <div className="bg-slate-500 px-3 py-1.5">
-                        <span className="text-[8px] font-extrabold text-white uppercase tracking-widest">💬 Tương tác & Hiển thị</span>
-                    </div>
-                    <div className="grid grid-cols-4 divide-x divide-slate-100">
-                        <div className="px-2.5 py-2">
-                            <p className="text-[7px] text-slate-400 uppercase font-bold tracking-wider">Tin nhắn</p>
-                            <p className="text-base font-black font-mono text-slate-800 leading-tight">{d.messages}</p>
-                            <p className="text-[8px] text-slate-400">CP: {formatVNDCompact(d.cost_per_message)}</p>
-                        </div>
-                        <div className="px-2.5 py-2">
-                            <p className="text-[7px] text-slate-400 uppercase font-bold tracking-wider">CPM</p>
-                            <p className="text-base font-black font-mono text-slate-800 leading-tight">{formatVNDCompact(d.cpm)}</p>
-                        </div>
-                        <div className="px-2.5 py-2">
-                            <p className="text-[7px] text-slate-400 uppercase font-bold tracking-wider">Tần suất</p>
-                            <p className="text-base font-black font-mono text-slate-800 leading-tight">{d.frequency.toFixed(2)}</p>
-                        </div>
-                        <div className="px-2.5 py-2">
-                            <p className="text-[7px] text-slate-400 uppercase font-bold tracking-wider">Bình luận</p>
-                            <p className="text-base font-black font-mono text-slate-800 leading-tight">{d.comments}</p>
-                        </div>
-                    </div>
-                </div>
-            </div>
 
             {/* ── POS Market Breakdown bar ── */}
             {posBreakdown.length > 0 && (
@@ -958,7 +891,47 @@ export default function AdsCommandCenter() {
                                 </td></tr>
                             )}
                         </tbody>
-                    </table>
+                        <tfoot className="border-t-2 border-slate-200">
+                            {/* ── FB ADS MANAGER STYLE TOTALS ROW ── */}
+                            {groupedCampaigns.length > 0 && (
+                                <tr className="bg-slate-50/80 font-bold text-[11px]">
+                                    <td className="pl-4 pr-2 py-2.5 border-r border-slate-200" colSpan={2}>
+                                        <div className="text-slate-500 text-[10px] font-bold">
+                                            Kết quả từ {groupedCampaigns.length} chiến dịch
+                                        </div>
+                                        {posBreakdown.length > 0 && (
+                                            <div className="flex flex-wrap gap-x-3 mt-0.5">
+                                                {posBreakdown.map(m => (
+                                                    <span key={m.name} className="text-[9px] text-red-500 font-semibold">
+                                                        {m.name} <span className="font-black">{m.count}</span> <span className="text-slate-400">({formatVNDCompact(m.revenue)})</span>
+                                                    </span>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </td>
+                                    {/* META ADS totals */}
+                                    <td className="px-1.5 py-2.5 text-right font-mono text-slate-700 whitespace-nowrap">{formatVNDCompact(d.spend)}</td>
+                                    <td className="px-1.5 py-2.5 text-right font-mono text-blue-700">{d.purchases || "—"}</td>
+                                    <td className="px-1.5 py-2.5 text-right font-mono text-slate-500 whitespace-nowrap">{d.cost_per_purchase > 0 ? formatVNDCompact(d.cost_per_purchase) : "—"}</td>
+                                    <td className="px-1.5 py-2.5 text-right font-mono text-blue-700 whitespace-nowrap border-r border-slate-200">
+                                        {d.conversion_value > 0 ? formatVNDCompact(d.conversion_value) : "—"}
+                                        {d.roas > 0 && <div className="text-[9px] text-blue-500">ROAS {d.roas.toFixed(2)}x</div>}
+                                    </td>
+                                    {/* POS totals */}
+                                    <td className="px-1.5 py-2.5 text-right font-mono text-red-600 font-black bg-red-50/50">{dFinal.pos_orders || "—"}</td>
+                                    <td className="px-1.5 py-2.5 text-right font-mono text-red-600 whitespace-nowrap bg-red-50/50">{dFinal.pos_revenue > 0 ? formatVNDCompact(dFinal.pos_revenue) : "—"}</td>
+                                    <td className={cn("px-1.5 py-2.5 text-right font-mono font-bold whitespace-nowrap bg-red-50/50 border-r border-slate-200",
+                                        dFinal.pos_roas >= 3 ? "text-emerald-600" : dFinal.pos_roas >= 1 ? "text-red-600" : "text-slate-400")}>
+                                        {dFinal.pos_roas > 0 ? `${dFinal.pos_roas.toFixed(1)}x` : "—"}
+                                    </td>
+                                    {/* Tương tác totals */}
+                                    <td className="px-1.5 py-2.5 text-right font-mono text-slate-600">{d.messages || "—"}</td>
+                                    <td className="px-1.5 py-2.5 text-right font-mono text-slate-500 whitespace-nowrap">{d.cost_per_message > 0 ? formatVNDCompact(d.cost_per_message) : "—"}</td>
+                                    <td className="pr-4 pl-1.5 py-2.5 text-right font-mono text-slate-500">{d.comments || "—"}</td>
+                                </tr>
+                            )}
+                        </tfoot>
+                        </table>
                 </div>
             </section>
         </div>
