@@ -512,6 +512,7 @@ export default function BroadcastTab() {
 
     // Send a specific box's message
     const sendingLockRef = useRef(false); // Lock chống double-fire
+    const [batchProgress, setBatchProgress] = useState<{ sent: number; total: number } | null>(null);
 
     const handleSendBox = async (boxIdx: number) => {
         // ── Guard chống gọi lặp ──
@@ -526,12 +527,12 @@ export default function BroadcastTab() {
         abortControllerRef.current = new AbortController();
         const signal = abortControllerRef.current.signal;
 
-        const recipients = customers
+        const allRecipients = customers
             .filter((c) => selectedIds.has(c.id))
             .map((c) => ({ psid: c.psid, pageFbId: c.pageFbId, name: c.customerName, conversationId: c.id }));
 
         try {
-            // ── Upload ảnh lên hosting trước (nếu có) → lấy public URL ──
+            // ── Upload ảnh (nếu có) ──
             let imageUrls: string[] = [];
             if (boxMedia.length > 0) {
                 try {
@@ -542,32 +543,59 @@ export default function BroadcastTab() {
                         signal,
                     });
                     const uploadData = await uploadRes.json();
-                    if (uploadData.urls) {
-                        imageUrls = uploadData.urls;
-                    }
+                    if (uploadData.urls) imageUrls = uploadData.urls;
                 } catch (uploadErr) {
                     if (uploadErr instanceof Error && uploadErr.name === 'AbortError') throw uploadErr;
                     console.error("Image upload failed:", uploadErr);
                 }
             }
 
-            const payload: Record<string, unknown> = { recipients, message: msg || '' };
-            if (imageUrls.length > 0) {
-                payload.images = imageUrls;
+            // ── GỬI THEO BATCH 5 NGƯỜI/REQUEST ──
+            // Tránh Vercel serverless timeout (10-60s) gây retry + gửi lặp
+            const BATCH_SIZE = 5;
+            const allResults: SendResult[] = [];
+            const totalBatches = Math.ceil(allRecipients.length / BATCH_SIZE);
+
+            for (let batchIdx = 0; batchIdx < totalBatches; batchIdx++) {
+                // Check if aborted
+                if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
+
+                const batchStart = batchIdx * BATCH_SIZE;
+                const batch = allRecipients.slice(batchStart, batchStart + BATCH_SIZE);
+
+                // Update progress
+                setBatchProgress({ sent: batchStart, total: allRecipients.length });
+
+                const payload: Record<string, unknown> = { recipients: batch, message: msg || '' };
+                if (imageUrls.length > 0) payload.images = imageUrls;
+
+                try {
+                    const res = await fetch("/api/broadcast", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify(payload),
+                        signal,
+                    });
+                    const data = await res.json();
+                    if (data.results) {
+                        allResults.push(...data.results);
+                    } else if (data.error) {
+                        batch.forEach(r => allResults.push({ psid: r.psid, name: r.name, success: false, error: data.error }));
+                    }
+                } catch (batchErr) {
+                    if (batchErr instanceof Error && batchErr.name === 'AbortError') throw batchErr;
+                    batch.forEach(r => allResults.push({ psid: r.psid, name: r.name, success: false, error: "Network error" }));
+                }
+
+                // Delay 500ms between batches
+                if (batchIdx < totalBatches - 1) {
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                }
             }
 
-            const res = await fetch("/api/broadcast", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(payload),
-                signal,
-            });
-            const data = await res.json();
-            if (data.error) {
-                setSendResults([{ psid: "error", name: "System", success: false, error: data.error }]);
-            } else {
-                setSendResults(data.results || []);
-            }
+            setBatchProgress({ sent: allRecipients.length, total: allRecipients.length });
+            setSendResults(allResults);
+
         } catch (err: unknown) {
             if (err instanceof Error && err.name === 'AbortError') {
                 setSendResults([{ psid: 'cancelled', name: 'System', success: false, error: '🚫 Đã huỷ gửi' }]);
@@ -578,6 +606,7 @@ export default function BroadcastTab() {
         } finally {
             setIsSending(false);
             sendingLockRef.current = false;
+            setBatchProgress(null);
             abortControllerRef.current = null;
         }
     };
@@ -604,8 +633,24 @@ export default function BroadcastTab() {
     const successCount = sendResults?.filter((r) => r.success).length || 0;
     const failCount = sendResults ? sendResults.length - successCount : 0;
 
+    // Batch progress UI helper
+    const progressPercent = batchProgress ? Math.round((batchProgress.sent / batchProgress.total) * 100) : 0;
+
     return (
         <div className="space-y-4">
+            {/* Batch Progress */}
+            {batchProgress && (
+                <div className="rounded-lg border border-blue-200 bg-blue-50 p-3">
+                    <div className="flex items-center justify-between text-sm text-blue-700 font-medium mb-1.5">
+                        <span>⏳ Đang gửi... {batchProgress.sent}/{batchProgress.total} người</span>
+                        <span>{progressPercent}%</span>
+                    </div>
+                    <div className="w-full bg-blue-100 rounded-full h-2">
+                        <div className="bg-blue-500 h-2 rounded-full transition-all duration-300" style={{ width: `${progressPercent}%` }} />
+                    </div>
+                </div>
+            )}
+
             {/* Header */}
             <div className="flex items-center justify-between">
                 <div>
