@@ -358,10 +358,10 @@ export default function BroadcastTab() {
     }, [customers, filterPurchase, filterTimeRange, filterGender, filterActive]);
 
     const toggleSelectAll = () => {
-        if (selectedIds.size === filteredCustomers.length) {
+        if (selectedIds.size === customers.length && customers.length > 0) {
             setSelectedIds(new Set());
         } else {
-            setSelectedIds(new Set(filteredCustomers.map((c) => c.id)));
+            setSelectedIds(new Set(customers.map((c) => c.id)));
         }
     };
 
@@ -692,13 +692,13 @@ export default function BroadcastTab() {
             {/* Customer List */}
             <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
                 {/* Header */}
-                <div className="grid grid-cols-[40px_1fr_120px_80px_100px] gap-2 px-4 py-2.5 bg-slate-50 border-b border-slate-100 text-[10px] font-semibold text-slate-500 uppercase tracking-wider items-center">
-                    <button onClick={toggleSelectAll} className="flex items-center justify-center gap-1 col-span-1" title="Chọn tất cả">
-                        {selectedIds.size === filteredCustomers.length && filteredCustomers.length > 0
-                            ? <CheckSquare className="h-4 w-4 text-violet-600" />
-                            : <Square className="h-4 w-4 text-slate-400" />
+                <div className="grid grid-cols-[80px_1fr_120px_80px_100px] gap-2 px-4 py-2.5 bg-slate-50 border-b border-slate-100 text-[10px] font-semibold text-slate-500 uppercase tracking-wider items-center">
+                    <button onClick={toggleSelectAll} className="flex items-center gap-1.5 px-1 py-0.5 rounded hover:bg-violet-50 transition-colors" title={`Chọn tất cả ${customers.length} khách`}>
+                        {selectedIds.size === customers.length && customers.length > 0
+                            ? <CheckSquare className="h-4 w-4 text-violet-600 flex-shrink-0" />
+                            : <Square className="h-4 w-4 text-slate-400 flex-shrink-0" />
                         }
-                        <span className="text-[10px] text-slate-500">Tất cả</span>
+                        <span className="text-[10px] font-semibold text-violet-600 whitespace-nowrap">Tất cả</span>
                     </button>
                     <span>Khách hàng</span>
                     <span>SĐT</span>
@@ -749,7 +749,7 @@ export default function BroadcastTab() {
                         return (
                             <div
                                 key={c.id}
-                                className={`grid grid-cols-[40px_1fr_120px_80px_100px] gap-2 px-4 py-2.5 items-center cursor-pointer hover:bg-slate-50/80 transition-colors ${
+                                className={`grid grid-cols-[80px_1fr_120px_80px_100px] gap-2 px-4 py-2.5 items-center cursor-pointer hover:bg-slate-50/80 transition-colors ${
                                     isSelected ? "bg-violet-50/50" : ""
                                 } ${
                                     result?.success ? "!bg-green-50/50" : result && !result.success ? "!bg-red-50/50" : ""
