@@ -180,15 +180,29 @@ export default function BroadcastTab() {
     const [editNote, setEditNote] = useState("");
     const [scheduleToast, setScheduleToast] = useState<string | null>(null);
     const sendingRef = useRef<Set<string>>(new Set());
+    const [isGlobalPaused, setIsGlobalPaused] = useState(() => {
+        if (typeof window === "undefined") return true;
+        return localStorage.getItem("broadcast_global_paused") !== "false";
+    });
+
+    const toggleGlobalPause = () => {
+        setIsGlobalPaused(prev => {
+            const next = !prev;
+            localStorage.setItem("broadcast_global_paused", String(next));
+            setScheduleToast(next ? "⛔ Đã TẠM DỮNG tất cả lịch bắn bot" : "✅ Đã BẬT LẠI lịch bắn bot");
+            setTimeout(() => setScheduleToast(null), 3000);
+            return next;
+        });
+    };
 
     // Load schedules from localStorage on mount
     useEffect(() => { setSchedules(loadSchedules()); }, []);
 
-    // Auto-fire: check every 30 seconds — CHỈ GỬI 1 ĐOẠN/NGÀY, cycle qua segments
-    // ⛔ TẠM DỪNG BẮN BOT – disabled 2026-03-23
+    // Auto-fire: check every 30 seconds — chỉ chạy khi không bị global pause
     useEffect(() => {
         const tick = async () => {
-            return; // ⛔ PAUSED – xóa dòng này để bật lại
+            // Check global pause from localStorage (real-time)
+            if (localStorage.getItem("broadcast_global_paused") !== "false") return;
             const now = Date.now();
             const list = loadSchedules();
             for (const s of list) {
@@ -893,7 +907,7 @@ export default function BroadcastTab() {
                             </span>
                         </div>
                         <div className="grid grid-cols-5 gap-2">
-                            {/* Bắn ngay + Huỷ bắn */}
+                            {/* Bắn ngay + Huỷ bắn + Tạm dừng */}
                             <div className="relative flex flex-col gap-1">
                                 {!isSending ? (
                                     <select
@@ -916,6 +930,16 @@ export default function BroadcastTab() {
                                         🛑 HUỶ BẮN
                                     </button>
                                 )}
+                                <button
+                                    onClick={toggleGlobalPause}
+                                    className={`w-full rounded-lg px-2 py-1.5 text-center transition-all border-2 text-[11px] font-bold ${
+                                        isGlobalPaused
+                                            ? "border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+                                            : "border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100"
+                                    }`}
+                                >
+                                    {isGlobalPaused ? "▶️ Bật bot" : "⏸ Tạm dừng"}
+                                </button>
                             </div>
                             {SCHEDULE_HOURS.map((hour) => {
                                 const isActive = scheduledHour === hour;
