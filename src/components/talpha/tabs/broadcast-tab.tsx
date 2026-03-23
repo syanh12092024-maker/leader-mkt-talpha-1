@@ -938,7 +938,7 @@ export default function BroadcastTab() {
                                             : "border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100"
                                     }`}
                                 >
-                                    {isGlobalPaused ? "▶️ Bật bot" : "⏸ Tạm dừng"}
+                                    {isGlobalPaused ? "▶️ Bật bot" : "⛔ Huỷ bắn"}
                                 </button>
                             </div>
                             {SCHEDULE_HOURS.map((hour) => {
