@@ -908,38 +908,29 @@ export default function BroadcastTab() {
                             </span>
                         </div>
                         <div className="grid grid-cols-5 gap-2">
-                            {/* Bắn ngay + Huỷ bắn + Tạm dừng */}
+                            {/* Bắn ngay (trên) + Huỷ bắn (dưới) */}
                             <div className="relative flex flex-col gap-1">
-                                {!isSending ? (
-                                    <select
-                                        onChange={(e) => { const v = parseInt(e.target.value); if (!isNaN(v)) handleSendBox(v); e.target.value = ''; }}
-                                        disabled={selectedIds.size === 0}
-                                        className="w-full rounded-lg px-2 py-2.5 text-center transition-all border-2 border-red-300 bg-gradient-to-b from-red-500 to-orange-500 text-white shadow-md shadow-red-200 hover:shadow-red-300 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed appearance-none text-sm font-bold"
-                                        defaultValue=""
-                                    >
-                                        <option value="" disabled>⚡ Bắn ngay</option>
-                                        <option value="0">Đoạn 1</option>
-                                        <option value="1">Đoạn 2</option>
-                                        <option value="2">Đoạn 3</option>
-                                        <option value="3">Đoạn 4</option>
-                                    </select>
-                                ) : (
-                                    <button
-                                        onClick={() => { abortControllerRef.current?.abort(); setIsSending(false); }}
-                                        className="w-full rounded-lg px-2 py-2.5 text-center transition-all border-2 border-red-600 bg-red-700 text-white shadow-md animate-pulse text-sm font-bold hover:bg-red-800"
-                                    >
-                                        🛑 HUỶ BẮN
-                                    </button>
-                                )}
-                                <button
-                                    onClick={toggleGlobalPause}
-                                    className={`w-full rounded-lg px-2 py-1.5 text-center transition-all border-2 text-[11px] font-bold ${
-                                        isGlobalPaused
-                                            ? "border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
-                                            : "border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100"
-                                    }`}
+                                <select
+                                    onChange={(e) => { const v = parseInt(e.target.value); if (!isNaN(v)) handleSendBox(v); e.target.value = ''; }}
+                                    disabled={isSending || selectedIds.size === 0}
+                                    className="w-full rounded-lg px-2 py-2.5 text-center transition-all border-2 border-red-300 bg-gradient-to-b from-red-500 to-orange-500 text-white shadow-md shadow-red-200 hover:shadow-red-300 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed appearance-none text-sm font-bold"
+                                    defaultValue=""
                                 >
-                                    {isGlobalPaused ? "▶️ Bật bot" : "⛔ Huỷ bắn"}
+                                    <option value="" disabled>⚡ Bắn ngay</option>
+                                    <option value="0">Đoạn 1</option>
+                                    <option value="1">Đoạn 2</option>
+                                    <option value="2">Đoạn 3</option>
+                                    <option value="3">Đoạn 4</option>
+                                </select>
+                                <button
+                                    onClick={() => {
+                                        abortControllerRef.current?.abort();
+                                        setIsSending(false);
+                                        if (!isGlobalPaused) toggleGlobalPause();
+                                    }}
+                                    className="w-full rounded-lg px-2 py-1.5 text-center transition-all border-2 border-red-400 bg-red-50 text-red-700 text-[11px] font-bold hover:bg-red-100"
+                                >
+                                    ⛔ Huỷ bắn
                                 </button>
                             </div>
                             {SCHEDULE_HOURS.map((hour) => {
