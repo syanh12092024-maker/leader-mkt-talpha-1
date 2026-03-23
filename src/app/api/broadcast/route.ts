@@ -327,8 +327,6 @@ async function generatePageAccessToken(
 }
 
 export async function POST(req: NextRequest) {
-    // ⛔ EMERGENCY STOP – block all broadcasts
-    return NextResponse.json({ error: "⛔ Broadcast đã tạm dừng.", success: false }, { status: 403 });
     try {
         const config = loadConfig();
         const body = await req.json();
