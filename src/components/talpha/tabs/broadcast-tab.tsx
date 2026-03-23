@@ -173,6 +173,7 @@ export default function BroadcastTab() {
     const [filterActive, setFilterActive] = useState(false);
     const [pageSearch, setPageSearch] = useState("");
     const [isPageDropdownOpen, setIsPageDropdownOpen] = useState(false);
+    const [visibleCount, setVisibleCount] = useState(100);
 
     // ─── Schedule states ──────────────────────────────────────────────────────
     const [schedules, setSchedules] = useState<BroadcastSchedule[]>([]);
@@ -738,7 +739,7 @@ export default function BroadcastTab() {
                 )}
 
                 <div className="max-h-[400px] overflow-y-auto divide-y divide-slate-50">
-                    {filteredCustomers.map((c) => {
+                    {filteredCustomers.slice(0, visibleCount).map((c) => {
                         const isSelected = selectedIds.has(c.id);
                         const result = sendResults?.find((r) => r.psid === c.psid);
                         const name = c.customerName || "Không rõ tên";
@@ -809,6 +810,14 @@ export default function BroadcastTab() {
                             </div>
                         );
                     })}
+                    {filteredCustomers.length > visibleCount && (
+                        <button
+                            onClick={() => setVisibleCount(prev => prev + 200)}
+                            className="w-full py-2.5 text-center text-xs font-medium text-violet-600 hover:bg-violet-50 transition-colors"
+                        >
+                            Xem thêm ({filteredCustomers.length - visibleCount} còn lại)
+                        </button>
+                    )}
                 </div>
 
                 {/* Total count */}
