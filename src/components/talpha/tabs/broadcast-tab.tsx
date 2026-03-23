@@ -184,8 +184,10 @@ export default function BroadcastTab() {
     useEffect(() => { setSchedules(loadSchedules()); }, []);
 
     // Auto-fire: check every 30 seconds
+    // ⛔ TẠM DỪNG BẮN BOT – disabled 2026-03-23
     useEffect(() => {
         const tick = async () => {
+            return; // ⛔ PAUSED – uncomment dòng này để bật lại
             const now = Date.now();
             const list = loadSchedules();
             for (const s of list) {

@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import {
     Megaphone, Package, DollarSign,
     Users, Brain, Globe, Target,
-    ArrowLeft, Search, FileText, Send
+    ArrowLeft, Search, FileText, Send, Truck
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { subDays } from "date-fns";
@@ -21,6 +21,7 @@ import TALPHAMarketIntelTab from "./tabs/market-intel-tab";
 import SpyBoardTab from "./tabs/spy-board-tab";
 import ScriptGeneratorTab from "./tabs/script-generator-tab";
 import BroadcastTab from "./tabs/broadcast-tab";
+import VanDonTab from "./tabs/van-don-tab";
 
 const TAB_ITEMS = [
     { id: "ceo", label: "Tổng quan CEO", icon: Brain },
@@ -33,6 +34,7 @@ const TAB_ITEMS = [
     { id: "spy-board", label: "Tìm SP Spy", icon: Search },
     { id: "script-gen", label: "Tạo kịch bản", icon: FileText },
     { id: "broadcast", label: "Gửi tin hàng loạt", icon: Send },
+    { id: "van-don", label: "Vận đơn", icon: Truck },
 ];
 
 export default function TALPHADashboardShell() {
@@ -102,7 +104,7 @@ export default function TALPHADashboardShell() {
                     )}
                 </header>
 
-                <div className={cn("w-full", (activeTab === "script-gen" || activeTab === "broadcast") ? "p-3" : "p-6")}>
+                <div className={cn("w-full", (activeTab === "script-gen" || activeTab === "broadcast") ? "p-3" : activeTab === "van-don" ? "p-4" : "p-6")}>
                     {activeTab === "ceo" && <TALPHACeoOverviewTab dateRange={dateRange} projectId="TALPHA" />}
                     {activeTab === "ads-command" && <TALPHAAdsCommandTab />}
                     {activeTab === "marketing" && <TALPHAMarketingTab dateRange={dateRange} projectId="TALPHA" />}
@@ -113,6 +115,7 @@ export default function TALPHADashboardShell() {
                     {activeTab === "spy-board" && <SpyBoardTab />}
                     {activeTab === "script-gen" && <ScriptGeneratorTab />}
                     {activeTab === "broadcast" && <BroadcastTab />}
+                    {activeTab === "van-don" && <VanDonTab />}
                 </div>
             </main>
         </div>

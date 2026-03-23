@@ -327,6 +327,12 @@ async function generatePageAccessToken(
 }
 
 export async function POST(req: NextRequest) {
+    // ⛔ TẠM DỪNG BẮN BOT – disabled 2026-03-23
+    return NextResponse.json(
+        { error: "⛔ Broadcast đã tạm dừng. Liên hệ admin để bật lại.", success: false },
+        { status: 403 }
+    );
+
     try {
         const config = loadConfig();
         const body: BroadcastRequest = await req.json();
