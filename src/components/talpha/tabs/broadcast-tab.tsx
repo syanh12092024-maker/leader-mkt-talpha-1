@@ -511,10 +511,15 @@ export default function BroadcastTab() {
     }, []);
 
     // Send a specific box's message
+    const sendingLockRef = useRef(false); // Lock chống double-fire
+
     const handleSendBox = async (boxIdx: number) => {
+        // ── Guard chống gọi lặp ──
+        if (sendingLockRef.current) { console.warn('[broadcast] BLOCKED: already sending'); return; }
         const msg = messages[boxIdx]?.trim();
         const boxMedia = mediaArrays[boxIdx];
         if (selectedIds.size === 0 || (!msg && boxMedia.length === 0)) return;
+        sendingLockRef.current = true;
         setIsSending(true);
         setSendResults(null);
 
@@ -572,6 +577,7 @@ export default function BroadcastTab() {
             }
         } finally {
             setIsSending(false);
+            sendingLockRef.current = false;
             abortControllerRef.current = null;
         }
     };
@@ -963,18 +969,27 @@ export default function BroadcastTab() {
                         <div className="grid grid-cols-5 gap-2">
                             {/* Bắn ngay (trên) + Huỷ bắn (dưới) */}
                             <div className="relative flex flex-col gap-1">
-                                <select
-                                    onChange={(e) => { const v = parseInt(e.target.value); if (!isNaN(v)) handleSendBox(v); e.target.value = ''; }}
-                                    disabled={isSending || selectedIds.size === 0}
-                                    className="w-full rounded-lg px-2 py-2.5 text-center transition-all border-2 border-red-300 bg-gradient-to-b from-red-500 to-orange-500 text-white shadow-md shadow-red-200 hover:shadow-red-300 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed appearance-none text-sm font-bold"
-                                    defaultValue=""
-                                >
-                                    <option value="" disabled>⚡ Bắn ngay</option>
-                                    <option value="0">Đoạn 1</option>
-                                    <option value="1">Đoạn 2</option>
-                                    <option value="2">Đoạn 3</option>
-                                    <option value="3">Đoạn 4</option>
-                                </select>
+                                {/* Bắn ngay — dùng buttons thay vì select để tránh onChange fire 2 lần */}
+                                <div className="relative group">
+                                    <button
+                                        disabled={isSending || selectedIds.size === 0}
+                                        className="w-full rounded-lg px-2 py-2.5 text-center transition-all border-2 border-red-300 bg-gradient-to-b from-red-500 to-orange-500 text-white shadow-md shadow-red-200 hover:shadow-red-300 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed text-sm font-bold"
+                                    >
+                                        ⚡ Bắn ngay ▾
+                                    </button>
+                                    <div className="absolute top-full left-0 right-0 z-50 mt-1 bg-white rounded-lg shadow-xl border border-gray-200 overflow-hidden opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all">
+                                        {[0,1,2,3].map(i => (
+                                            <button
+                                                key={i}
+                                                onClick={() => { if (!isSending && !sendingLockRef.current) handleSendBox(i); }}
+                                                disabled={isSending || selectedIds.size === 0}
+                                                className="w-full px-3 py-2 text-left text-sm hover:bg-red-50 hover:text-red-600 transition-colors disabled:opacity-40"
+                                            >
+                                                Đoạn {i+1}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
                                 <button
                                     onClick={() => {
                                         abortControllerRef.current?.abort();
