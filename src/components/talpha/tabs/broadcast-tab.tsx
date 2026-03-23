@@ -113,6 +113,7 @@ interface BroadcastSchedule {
     lastFiredAt: string | null;
     nextFireAt: string | null;
     note?: string;
+    lastSegmentIndex?: number; // Track which segment was last sent (0-3)
 }
 
 const SCHEDULE_KEY = "broadcast_schedules_v2";
@@ -183,11 +184,11 @@ export default function BroadcastTab() {
     // Load schedules from localStorage on mount
     useEffect(() => { setSchedules(loadSchedules()); }, []);
 
-    // Auto-fire: check every 30 seconds
+    // Auto-fire: check every 30 seconds — CHỈ GỬI 1 ĐOẠN/NGÀY, cycle qua segments
     // ⛔ TẠM DỪNG BẮN BOT – disabled 2026-03-23
     useEffect(() => {
         const tick = async () => {
-            return; // ⛔ PAUSED – uncomment dòng này để bật lại
+            return; // ⛔ PAUSED – xóa dòng này để bật lại
             const now = Date.now();
             const list = loadSchedules();
             for (const s of list) {
@@ -203,8 +204,15 @@ export default function BroadcastTab() {
                     let recips: Customer[] = data.customers;
                     if (s.filterPurchase === "no_purchase") recips = recips.filter((c: Customer) => !c.customerPhone && c.orderCount === 0);
                     if (s.filterPurchase === "has_purchase") recips = recips.filter((c: Customer) => c.customerPhone || c.orderCount > 0);
-                    const msg = s.messages[0]?.trim();
-                    if (msg && recips.length > 0) {
+
+                    // ── Cycle segments: chỉ gửi 1 đoạn, lần sau gửi đoạn tiếp theo ──
+                    const validMsgs = s.messages.map((m, i) => ({ msg: m?.trim(), idx: i })).filter(x => x.msg);
+                    if (validMsgs.length === 0 || recips.length === 0) continue;
+                    const prevIdx = s.lastSegmentIndex ?? -1;
+                    const nextSegment = validMsgs.find(x => x.idx > prevIdx) || validMsgs[0];
+                    const msg = nextSegment.msg;
+
+                    if (msg) {
                         await fetch("/api/broadcast", {
                             method: "POST",
                             headers: { "Content-Type": "application/json" },
@@ -212,7 +220,7 @@ export default function BroadcastTab() {
                         });
                     }
                     const tz = SHOP_TIMEZONES[s.shopName]?.offset ?? 3;
-                    const updated = list.map(x => x.id === s.id ? { ...x, lastFiredAt: new Date().toISOString(), nextFireAt: calcNextFireAt(s.hour, tz) } : x);
+                    const updated = list.map(x => x.id === s.id ? { ...x, lastFiredAt: new Date().toISOString(), nextFireAt: calcNextFireAt(s.hour, tz), lastSegmentIndex: nextSegment.idx } : x);
                     saveSchedules(updated);
                     setSchedules(updated);
                 } catch (err) { console.error("Auto-fire error:", err); }
@@ -887,20 +895,29 @@ export default function BroadcastTab() {
                             </span>
                         </div>
                         <div className="grid grid-cols-5 gap-2">
-                            {/* Bắn ngay - chọn đoạn */}
-                            <div className="relative">
-                                <select
-                                    onChange={(e) => { const v = parseInt(e.target.value); if (!isNaN(v)) handleSendBox(v); e.target.value = ''; }}
-                                    disabled={isSending || selectedIds.size === 0}
-                                    className="w-full rounded-lg px-2 py-2.5 text-center transition-all border-2 border-red-300 bg-gradient-to-b from-red-500 to-orange-500 text-white shadow-md shadow-red-200 hover:shadow-red-300 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed appearance-none text-sm font-bold"
-                                    defaultValue=""
-                                >
-                                    <option value="" disabled>⚡ Bắn ngay</option>
-                                    <option value="0">Đoạn 1</option>
-                                    <option value="1">Đoạn 2</option>
-                                    <option value="2">Đoạn 3</option>
-                                    <option value="3">Đoạn 4</option>
-                                </select>
+                            {/* Bắn ngay + Huỷ bắn */}
+                            <div className="relative flex flex-col gap-1">
+                                {!isSending ? (
+                                    <select
+                                        onChange={(e) => { const v = parseInt(e.target.value); if (!isNaN(v)) handleSendBox(v); e.target.value = ''; }}
+                                        disabled={selectedIds.size === 0}
+                                        className="w-full rounded-lg px-2 py-2.5 text-center transition-all border-2 border-red-300 bg-gradient-to-b from-red-500 to-orange-500 text-white shadow-md shadow-red-200 hover:shadow-red-300 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed appearance-none text-sm font-bold"
+                                        defaultValue=""
+                                    >
+                                        <option value="" disabled>⚡ Bắn ngay</option>
+                                        <option value="0">Đoạn 1</option>
+                                        <option value="1">Đoạn 2</option>
+                                        <option value="2">Đoạn 3</option>
+                                        <option value="3">Đoạn 4</option>
+                                    </select>
+                                ) : (
+                                    <button
+                                        onClick={() => { abortControllerRef.current?.abort(); setIsSending(false); }}
+                                        className="w-full rounded-lg px-2 py-2.5 text-center transition-all border-2 border-red-600 bg-red-700 text-white shadow-md animate-pulse text-sm font-bold hover:bg-red-800"
+                                    >
+                                        🛑 HUỶ BẮN
+                                    </button>
+                                )}
                             </div>
                             {SCHEDULE_HOURS.map((hour) => {
                                 const isActive = scheduledHour === hour;

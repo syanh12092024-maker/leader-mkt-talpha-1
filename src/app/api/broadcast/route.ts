@@ -327,20 +327,18 @@ async function generatePageAccessToken(
 }
 
 export async function POST(req: NextRequest) {
-    // ⛔ TẠM DỪNG BẮN BOT – disabled 2026-03-23
-    return NextResponse.json(
-        { error: "⛔ Broadcast đã tạm dừng. Liên hệ admin để bật lại.", success: false },
-        { status: 403 }
-    );
-
     try {
         const config = loadConfig();
-        const body: BroadcastRequest = await req.json();
-        const { recipients, message } = body;
+        const body = await req.json();
+        const { recipients, message, images } = body as {
+            recipients: Array<{ psid: string; pageFbId: string; name: string; conversationId?: string }>;
+            message: string;
+            images?: string[]; // base64 data URLs
+        };
 
-        if (!recipients?.length || !message?.trim()) {
+        if (!recipients?.length || (!message?.trim() && (!images || images.length === 0))) {
             return NextResponse.json(
-                { error: "Thiếu thông tin: recipients, message" },
+                { error: "Thiếu thông tin: recipients, message hoặc images" },
                 { status: 400 }
             );
         }
@@ -390,33 +388,91 @@ export async function POST(req: NextRequest) {
                     continue;
                 }
 
-                // Conversation ID = pageId_psid
                 const convoId = recipient.conversationId || `${pageId}_${recipient.psid}`;
+                const apiBase = `https://pages.fm/api/public_api/v1/pages/${pageId}/conversations/${convoId}/messages?page_access_token=${pageToken}`;
 
-                const sendRes = await fetch(
-                    `https://pages.fm/api/public_api/v1/pages/${pageId}/conversations/${convoId}/messages?page_access_token=${pageToken}`,
-                    {
+                let textSuccess = true;
+                let imageSuccess = true;
+
+                // 1. Gửi tin nhắn text trước
+                if (message?.trim()) {
+                    const sendRes = await fetch(apiBase, {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({
                             action: "reply_inbox",
                             message: message.trim(),
                         }),
+                    });
+                    const sendData = await sendRes.json().catch(() => ({}));
+                    if (!sendData.success) {
+                        textSuccess = false;
+                        const errMsg = sendData.original_error || sendData.message || `HTTP ${sendRes.status}`;
+                        results.push({ psid: recipient.psid, name: recipient.name, success: false, error: `Text: ${String(errMsg)}` });
+                        // Delay before next recipient
+                        await new Promise((resolve) => setTimeout(resolve, 500));
+                        continue;
                     }
-                );
-
-                const sendData = await sendRes.json().catch(() => ({}));
-
-                if (sendData.success) {
-                    results.push({ psid: recipient.psid, name: recipient.name, success: true });
-                } else {
-                    const errMsg = sendData.original_error || sendData.message || `HTTP ${sendRes.status}`;
-                    results.push({ psid: recipient.psid, name: recipient.name, success: false, error: String(errMsg) });
                 }
 
-                // Delay 500ms between messages to avoid rate limiting
+                // 2. Gửi từng hình ảnh (nếu có)
+                if (images && images.length > 0) {
+                    for (let imgIdx = 0; imgIdx < images.length; imgIdx++) {
+                        const imgData = images[imgIdx];
+                        try {
+                            // Pancake supports image_url in attachment
+                            const imgRes = await fetch(apiBase, {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({
+                                    action: "reply_inbox",
+                                    attachment: {
+                                        type: "image",
+                                        payload: {
+                                            url: imgData, // base64 data URL or public URL
+                                        },
+                                    },
+                                }),
+                            });
+                            const imgResult = await imgRes.json().catch(() => ({}));
+                            if (!imgResult.success) {
+                                // Try alternative: send as message with image URL
+                                const altRes = await fetch(apiBase, {
+                                    method: "POST",
+                                    headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({
+                                        action: "reply_inbox",
+                                        message: "",
+                                        file_ids: [],
+                                        image_url: imgData,
+                                    }),
+                                });
+                                const altResult = await altRes.json().catch(() => ({}));
+                                if (!altResult.success) {
+                                    imageSuccess = false;
+                                    console.error(`[broadcast] Image ${imgIdx + 1} failed for ${recipient.name}:`, altResult);
+                                }
+                            }
+                            // Delay between images
+                            await new Promise((resolve) => setTimeout(resolve, 300));
+                        } catch (imgErr) {
+                            imageSuccess = false;
+                            console.error(`[broadcast] Image ${imgIdx + 1} error:`, imgErr);
+                        }
+                    }
+                }
+
+                if (textSuccess && imageSuccess) {
+                    results.push({ psid: recipient.psid, name: recipient.name, success: true });
+                } else if (textSuccess && !imageSuccess) {
+                    results.push({ psid: recipient.psid, name: recipient.name, success: true, error: "⚠️ Text OK, ảnh lỗi" });
+                } else {
+                    results.push({ psid: recipient.psid, name: recipient.name, success: false, error: "Gửi thất bại" });
+                }
+
+                // Delay 500ms between recipients
                 await new Promise((resolve) => setTimeout(resolve, 500));
-            } catch (err) {
+            } catch (err: unknown) {
                 results.push({
                     psid: recipient.psid,
                     name: recipient.name,
@@ -437,7 +493,7 @@ export async function POST(req: NextRequest) {
         });
     } catch (error: unknown) {
         console.error("[broadcast] POST Error:", error);
-        const message = error instanceof Error ? error.message : "Unknown error";
-        return NextResponse.json({ error: message }, { status: 500 });
+        const errMessage = error instanceof Error ? error.message : "Unknown error";
+        return NextResponse.json({ error: errMessage }, { status: 500 });
     }
 }
