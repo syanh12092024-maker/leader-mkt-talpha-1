@@ -526,9 +526,29 @@ export default function BroadcastTab() {
             .map((c) => ({ psid: c.psid, pageFbId: c.pageFbId, name: c.customerName, conversationId: c.id }));
 
         try {
-            const payload: Record<string, unknown> = { recipients, message: msg || '' };
+            // ── Upload ảnh lên hosting trước (nếu có) → lấy public URL ──
+            let imageUrls: string[] = [];
             if (boxMedia.length > 0) {
-                payload.images = boxMedia;
+                try {
+                    const uploadRes = await fetch("/api/upload", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ images: boxMedia }),
+                        signal,
+                    });
+                    const uploadData = await uploadRes.json();
+                    if (uploadData.urls) {
+                        imageUrls = uploadData.urls;
+                    }
+                } catch (uploadErr) {
+                    if (uploadErr instanceof Error && uploadErr.name === 'AbortError') throw uploadErr;
+                    console.error("Image upload failed:", uploadErr);
+                }
+            }
+
+            const payload: Record<string, unknown> = { recipients, message: msg || '' };
+            if (imageUrls.length > 0) {
+                payload.images = imageUrls;
             }
 
             const res = await fetch("/api/broadcast", {

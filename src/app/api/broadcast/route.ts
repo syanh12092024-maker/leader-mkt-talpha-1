@@ -420,39 +420,67 @@ export async function POST(req: NextRequest) {
                     for (let imgIdx = 0; imgIdx < images.length; imgIdx++) {
                         const imgData = images[imgIdx];
                         try {
-                            // Pancake supports image_url in attachment
-                            const imgRes = await fetch(apiBase, {
-                                method: "POST",
-                                headers: { "Content-Type": "application/json" },
-                                body: JSON.stringify({
-                                    action: "reply_inbox",
-                                    attachment: {
-                                        type: "image",
-                                        payload: {
-                                            url: imgData, // base64 data URL or public URL
-                                        },
-                                    },
-                                }),
-                            });
-                            const imgResult = await imgRes.json().catch(() => ({}));
-                            if (!imgResult.success) {
-                                // Try alternative: send as message with image URL
-                                const altRes = await fetch(apiBase, {
+                            let imgSent = false;
+
+                            // ── Method 1: FormData with binary file ──
+                            if (imgData.startsWith("data:")) {
+                                const matches = imgData.match(/^data:([^;]+);base64,(.+)$/);
+                                if (matches) {
+                                    const mimeType = matches[1];
+                                    const base64 = matches[2];
+                                    const buffer = Buffer.from(base64, 'base64');
+                                    const ext = mimeType.split('/')[1] || 'png';
+
+                                    const formData = new FormData();
+                                    formData.append('action', 'reply_inbox');
+                                    formData.append('file', new Blob([buffer], { type: mimeType }), `image_${imgIdx}.${ext}`);
+
+                                    const imgRes = await fetch(apiBase, {
+                                        method: "POST",
+                                        body: formData,
+                                    });
+                                    const imgResult = await imgRes.json().catch(() => ({}));
+                                    if (imgResult.success) { imgSent = true; }
+                                    else { console.error(`[broadcast] FormData upload failed:`, imgResult); }
+                                }
+                            }
+
+                            // ── Method 2: attachment URL (for public URLs from upload API) ──
+                            if (!imgSent && (imgData.startsWith("http://") || imgData.startsWith("https://"))) {
+                                const imgRes = await fetch(apiBase, {
+                                    method: "POST",
+                                    headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({
+                                        action: "reply_inbox",
+                                        attachment: { type: "image", payload: { url: imgData } },
+                                    }),
+                                });
+                                const imgResult = await imgRes.json().catch(() => ({}));
+                                if (imgResult.success) { imgSent = true; }
+                                else { console.error(`[broadcast] Attachment URL failed:`, imgResult); }
+                            }
+
+                            // ── Method 3: image_url field ──
+                            if (!imgSent && (imgData.startsWith("http://") || imgData.startsWith("https://"))) {
+                                const imgRes = await fetch(apiBase, {
                                     method: "POST",
                                     headers: { "Content-Type": "application/json" },
                                     body: JSON.stringify({
                                         action: "reply_inbox",
                                         message: "",
-                                        file_ids: [],
                                         image_url: imgData,
                                     }),
                                 });
-                                const altResult = await altRes.json().catch(() => ({}));
-                                if (!altResult.success) {
-                                    imageSuccess = false;
-                                    console.error(`[broadcast] Image ${imgIdx + 1} failed for ${recipient.name}:`, altResult);
-                                }
+                                const imgResult = await imgRes.json().catch(() => ({}));
+                                if (imgResult.success) { imgSent = true; }
+                                else { console.error(`[broadcast] image_url failed:`, imgResult); }
                             }
+
+                            if (!imgSent) {
+                                imageSuccess = false;
+                                console.error(`[broadcast] All image methods failed for ${recipient.name}, img ${imgIdx + 1}`);
+                            }
+
                             // Delay between images
                             await new Promise((resolve) => setTimeout(resolve, 300));
                         } catch (imgErr) {
