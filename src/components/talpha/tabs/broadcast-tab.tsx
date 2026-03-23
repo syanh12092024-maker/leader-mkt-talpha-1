@@ -205,14 +205,12 @@ export default function BroadcastTab() {
                     if (s.filterPurchase === "no_purchase") recips = recips.filter((c: Customer) => !c.customerPhone && c.orderCount === 0);
                     if (s.filterPurchase === "has_purchase") recips = recips.filter((c: Customer) => c.customerPhone || c.orderCount > 0);
 
-                    // ── Cycle segments: chỉ gửi 1 đoạn, lần sau gửi đoạn tiếp theo ──
-                    const validMsgs = s.messages.map((m, i) => ({ msg: m?.trim(), idx: i })).filter(x => x.msg);
-                    if (validMsgs.length === 0 || recips.length === 0) continue;
-                    const prevIdx = s.lastSegmentIndex ?? -1;
-                    const nextSegment = validMsgs.find(x => x.idx > prevIdx) || validMsgs[0];
-                    const msg = nextSegment.msg;
+                    // ── Mỗi mốc giờ gửi đúng đoạn tương ứng ──
+                    // 6:00 → Đoạn 1 (idx 0) | 11:00 → Đoạn 2 (idx 1) | 17:00 → Đoạn 3 (idx 2) | 21:00 → Đoạn 4 (idx 3)
+                    const segmentIdx = SCHEDULE_HOURS.indexOf(s.hour);
+                    const msg = (segmentIdx >= 0 ? s.messages[segmentIdx] : s.messages[0])?.trim();
 
-                    if (msg) {
+                    if (msg && recips.length > 0) {
                         await fetch("/api/broadcast", {
                             method: "POST",
                             headers: { "Content-Type": "application/json" },
@@ -220,7 +218,7 @@ export default function BroadcastTab() {
                         });
                     }
                     const tz = SHOP_TIMEZONES[s.shopName]?.offset ?? 3;
-                    const updated = list.map(x => x.id === s.id ? { ...x, lastFiredAt: new Date().toISOString(), nextFireAt: calcNextFireAt(s.hour, tz), lastSegmentIndex: nextSegment.idx } : x);
+                    const updated = list.map(x => x.id === s.id ? { ...x, lastFiredAt: new Date().toISOString(), nextFireAt: calcNextFireAt(s.hour, tz) } : x);
                     saveSchedules(updated);
                     setSchedules(updated);
                 } catch (err) { console.error("Auto-fire error:", err); }
