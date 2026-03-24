@@ -495,70 +495,68 @@ export async function POST(req: NextRequest) {
                     }
                 }
 
-                // 2. Gửi từng hình ảnh (nếu có)
+                // 2. Gửi từng hình ảnh (nếu có) — trực tiếp qua Pancake FormData
                 if (images && images.length > 0) {
                     for (let imgIdx = 0; imgIdx < images.length; imgIdx++) {
                         const imgData = images[imgIdx];
                         try {
                             let imgSent = false;
 
-                            // ── Method 1: FormData with binary file ──
+                            // Xử lý base64 data URL → Buffer → File upload
                             if (imgData.startsWith("data:")) {
                                 const matches = imgData.match(/^data:([^;]+);base64,(.+)$/);
                                 if (matches) {
                                     const mimeType = matches[1];
                                     const base64 = matches[2];
                                     const buffer = Buffer.from(base64, 'base64');
-                                    const ext = mimeType.split('/')[1] || 'png';
+                                    const ext = mimeType.split('/')[1]?.replace('jpeg', 'jpg') || 'png';
+                                    const fileName = `broadcast_${Date.now()}_${imgIdx}.${ext}`;
 
+                                    // Pancake API nhận file qua multipart/form-data
                                     const formData = new FormData();
                                     formData.append('action', 'reply_inbox');
-                                    formData.append('file', new Blob([buffer], { type: mimeType }), `image_${imgIdx}.${ext}`);
+                                    formData.append('file', new File([buffer], fileName, { type: mimeType }));
 
                                     const imgRes = await fetch(apiBase, {
                                         method: "POST",
                                         body: formData,
                                     });
                                     const imgResult = await imgRes.json().catch(() => ({}));
+                                    console.log(`[broadcast] FormData upload result for ${recipient.name}:`, JSON.stringify(imgResult).slice(0, 200));
                                     if (imgResult.success) { imgSent = true; }
-                                    else { console.error(`[broadcast] FormData upload failed:`, imgResult); }
                                 }
                             }
+                            // Xử lý URL — gửi qua attachment payload
+                            else if (imgData.startsWith("http://") || imgData.startsWith("https://")) {
+                                // Thử download ảnh từ URL rồi upload qua FormData
+                                try {
+                                    const dlRes = await fetch(imgData);
+                                    if (dlRes.ok) {
+                                        const arrayBuf = await dlRes.arrayBuffer();
+                                        const contentType = dlRes.headers.get('content-type') || 'image/png';
+                                        const ext = contentType.split('/')[1]?.replace('jpeg', 'jpg') || 'png';
+                                        const fileName = `broadcast_${Date.now()}_${imgIdx}.${ext}`;
 
-                            // ── Method 2: attachment URL (for public URLs from upload API) ──
-                            if (!imgSent && (imgData.startsWith("http://") || imgData.startsWith("https://"))) {
-                                const imgRes = await fetch(apiBase, {
-                                    method: "POST",
-                                    headers: { "Content-Type": "application/json" },
-                                    body: JSON.stringify({
-                                        action: "reply_inbox",
-                                        attachment: { type: "image", payload: { url: imgData } },
-                                    }),
-                                });
-                                const imgResult = await imgRes.json().catch(() => ({}));
-                                if (imgResult.success) { imgSent = true; }
-                                else { console.error(`[broadcast] Attachment URL failed:`, imgResult); }
-                            }
+                                        const formData = new FormData();
+                                        formData.append('action', 'reply_inbox');
+                                        formData.append('file', new File([arrayBuf], fileName, { type: contentType }));
 
-                            // ── Method 3: image_url field ──
-                            if (!imgSent && (imgData.startsWith("http://") || imgData.startsWith("https://"))) {
-                                const imgRes = await fetch(apiBase, {
-                                    method: "POST",
-                                    headers: { "Content-Type": "application/json" },
-                                    body: JSON.stringify({
-                                        action: "reply_inbox",
-                                        message: "",
-                                        image_url: imgData,
-                                    }),
-                                });
-                                const imgResult = await imgRes.json().catch(() => ({}));
-                                if (imgResult.success) { imgSent = true; }
-                                else { console.error(`[broadcast] image_url failed:`, imgResult); }
+                                        const imgRes = await fetch(apiBase, {
+                                            method: "POST",
+                                            body: formData,
+                                        });
+                                        const imgResult = await imgRes.json().catch(() => ({}));
+                                        console.log(`[broadcast] URL→FormData upload result for ${recipient.name}:`, JSON.stringify(imgResult).slice(0, 200));
+                                        if (imgResult.success) { imgSent = true; }
+                                    }
+                                } catch (dlErr) {
+                                    console.error(`[broadcast] Download image URL failed:`, dlErr);
+                                }
                             }
 
                             if (!imgSent) {
                                 imageSuccess = false;
-                                console.error(`[broadcast] All image methods failed for ${recipient.name}, img ${imgIdx + 1}`);
+                                console.error(`[broadcast] Image send FAILED for ${recipient.name}, img ${imgIdx + 1}`);
                             }
 
                             // Delay between images

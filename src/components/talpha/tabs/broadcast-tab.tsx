@@ -506,23 +506,8 @@ export default function BroadcastTab() {
             .map((c) => ({ psid: c.psid, pageFbId: c.pageFbId, name: c.customerName, conversationId: c.id }));
 
         try {
-            // ── Upload ảnh (nếu có) ──
-            let imageUrls: string[] = [];
-            if (boxMedia.length > 0) {
-                try {
-                    const uploadRes = await fetch("/api/upload", {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ images: boxMedia }),
-                        signal,
-                    });
-                    const uploadData = await uploadRes.json();
-                    if (uploadData.urls) imageUrls = uploadData.urls;
-                } catch (uploadErr) {
-                    if (uploadErr instanceof Error && uploadErr.name === 'AbortError') throw uploadErr;
-                    console.error("Image upload failed:", uploadErr);
-                }
-            }
+            // Ảnh gửi trực tiếp base64 — server sẽ convert → FormData → Pancake
+            const imageData: string[] = boxMedia.length > 0 ? boxMedia : [];
 
             // ── GỬI TỪNG NGƯỜI 1 — CLIENT LOOP ──
             const allResults: SendResult[] = [];
@@ -546,7 +531,7 @@ export default function BroadcastTab() {
                         recipients: [recipient],
                         message: msg || '',
                     };
-                    if (imageUrls.length > 0) payload.images = imageUrls;
+                    if (imageData.length > 0) payload.images = imageData;
 
                     const res = await fetch("/api/broadcast", {
                         method: "POST",
