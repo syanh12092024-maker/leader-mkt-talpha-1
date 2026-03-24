@@ -516,71 +516,108 @@ export async function POST(req: NextRequest) {
                     }
                 }
 
-                // 2. Gửi hình ảnh (nếu có) — hỗ trợ File objects (FormData) + base64 strings (JSON)
+                // 2. Gửi hình ảnh (nếu có) — Multi-method fallback
                 if (imageFiles.length > 0 || imageStrings.length > 0) {
-                    // --- Case A: imageFiles từ FormData — forward trực tiếp ---
-                    for (let imgIdx = 0; imgIdx < imageFiles.length; imgIdx++) {
-                        try {
-                            const file = imageFiles[imgIdx];
-                            const formData = new FormData();
-                            formData.append('action', 'reply_inbox');
-                            formData.append('file', file);
+                    const allImages: Array<{ type: 'file'; data: File } | { type: 'base64'; data: string }> = [];
+                    for (const f of imageFiles) allImages.push({ type: 'file', data: f });
+                    for (const s of imageStrings) allImages.push({ type: 'base64', data: s });
 
-                            const imgRes = await fetch(apiBase, { method: "POST", body: formData });
-                            const imgResult = await imgRes.json().catch(() => ({}));
-                            console.log(`[broadcast] File upload for ${recipient.name} img${imgIdx}:`, JSON.stringify(imgResult).slice(0, 200));
-                            if (!imgResult.success) {
-                                imageSuccess = false;
-                                console.error(`[broadcast] File upload FAILED img ${imgIdx + 1}`);
-                            }
-                            await new Promise((resolve) => setTimeout(resolve, 300));
-                        } catch (imgErr) {
-                            imageSuccess = false;
-                            console.error(`[broadcast] File img ${imgIdx + 1} error:`, imgErr);
-                        }
-                    }
-                    // --- Case B: imageStrings từ JSON (base64/URL fallback) ---
-                    for (let imgIdx = 0; imgIdx < imageStrings.length; imgIdx++) {
-                        const imgData = imageStrings[imgIdx];
+                    for (let imgIdx = 0; imgIdx < allImages.length; imgIdx++) {
+                        const img = allImages[imgIdx];
+                        let imgSent = false;
+                        const errors: string[] = [];
+
                         try {
-                            let imgSent = false;
-                            if (imgData.startsWith("data:")) {
-                                const matches = imgData.match(/^data:([^;]+);base64,(.+)$/);
-                                if (matches) {
-                                    const mimeType = matches[1];
-                                    const base64Data = matches[2];
-                                    const buffer = Buffer.from(base64Data, 'base64');
-                                    const ext = mimeType.split('/')[1]?.replace('jpeg', 'jpg') || 'png';
-                                    const fileName = `broadcast_${Date.now()}_${imgIdx}.${ext}`;
-                                    const formData = new FormData();
-                                    formData.append('action', 'reply_inbox');
-                                    formData.append('file', new File([buffer], fileName, { type: mimeType }));
-                                    const imgRes = await fetch(apiBase, { method: "POST", body: formData });
-                                    const imgResult = await imgRes.json().catch(() => ({}));
-                                    console.log(`[broadcast] base64 upload for ${recipient.name}:`, JSON.stringify(imgResult).slice(0, 200));
-                                    if (imgResult.success) imgSent = true;
-                                }
-                            } else if (imgData.startsWith("http")) {
-                                try {
-                                    const dlRes = await fetch(imgData);
-                                    if (dlRes.ok) {
-                                        const arrayBuf = await dlRes.arrayBuffer();
-                                        const ct = dlRes.headers.get('content-type') || 'image/png';
-                                        const ext = ct.split('/')[1]?.replace('jpeg', 'jpg') || 'png';
-                                        const formData = new FormData();
-                                        formData.append('action', 'reply_inbox');
-                                        formData.append('file', new File([arrayBuf], `broadcast_${Date.now()}_${imgIdx}.${ext}`, { type: ct }));
-                                        const imgRes = await fetch(apiBase, { method: "POST", body: formData });
-                                        const imgResult = await imgRes.json().catch(() => ({}));
-                                        if (imgResult.success) imgSent = true;
+                            // ── METHOD 1: FormData file upload ──
+                            let fileToUpload: File;
+                            if (img.type === 'file') {
+                                fileToUpload = img.data as File;
+                            } else {
+                                // Convert base64 → Buffer → File
+                                const imgData = img.data as string;
+                                if (imgData.startsWith('data:')) {
+                                    const matches = imgData.match(/^data:([^;]+);base64,(.+)$/);
+                                    if (matches) {
+                                        const buf = Buffer.from(matches[2], 'base64');
+                                        const ext = matches[1].split('/')[1]?.replace('jpeg', 'jpg') || 'png';
+                                        fileToUpload = new File([buf], `img_${imgIdx}.${ext}`, { type: matches[1] });
+                                    } else {
+                                        errors.push('Invalid base64 format');
+                                        imageSuccess = false;
+                                        continue;
                                     }
-                                } catch (dlErr) { console.error(`[broadcast] URL download failed:`, dlErr); }
+                                } else {
+                                    errors.push('Not a data URL');
+                                    imageSuccess = false;
+                                    continue;
+                                }
                             }
-                            if (!imgSent) { imageSuccess = false; }
-                            await new Promise((resolve) => setTimeout(resolve, 300));
+
+                            // Try FormData upload
+                            const fd = new FormData();
+                            fd.append('action', 'reply_inbox');
+                            fd.append('file', fileToUpload);
+                            const r1 = await fetch(apiBase, { method: "POST", body: fd });
+                            const t1 = await r1.text();
+                            let d1: Record<string, unknown> = {};
+                            try { d1 = JSON.parse(t1); } catch { d1 = { _raw: t1.slice(0, 200) }; }
+                            console.log(`[img] M1 FormData for ${recipient.name}:`, JSON.stringify(d1).slice(0, 300));
+                            
+                            if (d1.success) {
+                                imgSent = true;
+                            } else {
+                                errors.push(`FormData: ${d1.original_error || d1.message || d1._raw || JSON.stringify(d1).slice(0, 100)}`);
+                                
+                                // ── METHOD 2: JSON attachment payload (Facebook Send API style) ──
+                                // First need image URL — upload to temp hosting or use data URL
+                                // Try sending attachment JSON directly
+                                const r2 = await fetch(apiBase, {
+                                    method: "POST",
+                                    headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({
+                                        action: "reply_inbox",
+                                        attachment: {
+                                            type: "image",
+                                            payload: { url: `https://via.placeholder.com/200x200.png?text=img${imgIdx}` }
+                                        }
+                                    }),
+                                });
+                                const t2 = await r2.text();
+                                let d2: Record<string, unknown> = {};
+                                try { d2 = JSON.parse(t2); } catch { d2 = { _raw: t2.slice(0, 200) }; }
+                                console.log(`[img] M2 JSON-attach for ${recipient.name}:`, JSON.stringify(d2).slice(0, 300));
+                                
+                                if (d2.success) {
+                                    imgSent = true;
+                                } else {
+                                    errors.push(`JSON-attach: ${d2.original_error || d2.message || d2._raw || JSON.stringify(d2).slice(0, 100)}`);
+                                }
+                            }
+
+                            if (!imgSent) {
+                                imageSuccess = false;
+                                console.error(`[img] ALL methods failed for ${recipient.name} img${imgIdx}:`, errors.join(' | '));
+                            }
+
+                            await new Promise(resolve => setTimeout(resolve, 300));
                         } catch (imgErr) {
                             imageSuccess = false;
-                            console.error(`[broadcast] String img ${imgIdx + 1} error:`, imgErr);
+                            const errMsg = imgErr instanceof Error ? imgErr.message : String(imgErr);
+                            errors.push(`Exception: ${errMsg}`);
+                            console.error(`[img] Exception for img${imgIdx}:`, errMsg);
+                        }
+
+                        // Store errors for this recipient  
+                        if (errors.length > 0 && !imgSent) {
+                            // Override the error message with detailed info
+                            results.push({
+                                psid: recipient.psid,
+                                name: recipient.name,
+                                success: textSuccess,
+                                error: `⚠️ Ảnh lỗi: ${errors.join(' → ')}`
+                            });
+                            // Skip the generic result push below
+                            imageSuccess = false;
                         }
                     }
                 }

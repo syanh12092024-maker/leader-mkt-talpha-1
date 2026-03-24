@@ -1103,7 +1103,7 @@ export default function BroadcastTab() {
                                             {log.status === 'error' && '❌'}
                                         </span>
                                         <span className="truncate flex-1">{idx + 1}. {log.name}</span>
-                                        {log.error && <span className="text-red-400 text-[10px] truncate max-w-[120px]">{log.error}</span>}
+                                        {log.error && <span className="text-red-400 text-[10px] truncate max-w-[250px]" title={log.error}>{log.error}</span>}
                                     </div>
                                 ))}
                             </div>
