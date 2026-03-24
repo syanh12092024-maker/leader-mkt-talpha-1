@@ -1224,8 +1224,70 @@ export default function BroadcastTab() {
                                     </div>
                                 </div>
 
-
-
+                                {/* ─── Segment Status: 4 đoạn bắn ─── */}
+                                {s.isActive && (() => {
+                                    const tzOffset = SHOP_TIMEZONES[s.shopName]?.offset ?? 3;
+                                    const now = new Date();
+                                    const targetNow = new Date(now.getTime() + tzOffset * 3600000 + now.getTimezoneOffset() * 60000);
+                                    const currentHour = targetNow.getHours();
+                                    const currentMin = targetNow.getMinutes();
+                                    const currentDecimal = currentHour + currentMin / 60;
+                                    
+                                    const segments = [
+                                        { idx: 0, hour: 6, label: "Đoạn 1", icon: "🌅", time: "6h" },
+                                        { idx: 1, hour: 11, label: "Đoạn 2", icon: "☀️", time: "11h" },
+                                        { idx: 2, hour: 17, label: "Đoạn 3", icon: "🌆", time: "17h" },
+                                        { idx: 3, hour: 21, label: "Đoạn 4", icon: "🌙", time: "21h" },
+                                    ];
+                                    
+                                    // Determine status: done / active / waiting
+                                    const completedCount = segments.filter(seg => currentDecimal >= seg.hour + 0.5).length;
+                                    
+                                    return (
+                                        <div className="space-y-1.5 pt-1">
+                                            {/* 4 segments row */}
+                                            <div className="flex items-center gap-1">
+                                                {segments.map((seg) => {
+                                                    const isDone = currentDecimal >= seg.hour + 0.5; // 30 phút sau giờ bắn = đã gửi xong
+                                                    const isActive = !isDone && currentDecimal >= seg.hour - 0.5 && currentDecimal < seg.hour + 0.5;
+                                                    const isNext = !isDone && !isActive && seg.hour === s.hour;
+                                                    
+                                                    return (
+                                                        <div
+                                                            key={seg.idx}
+                                                            className={`flex-1 flex items-center justify-center gap-0.5 py-1 rounded-lg text-[10px] font-semibold transition-all ${
+                                                                isDone
+                                                                    ? "bg-green-100 text-green-700 border border-green-200"
+                                                                    : isActive
+                                                                    ? "bg-amber-100 text-amber-700 border border-amber-300 animate-pulse"
+                                                                    : isNext
+                                                                    ? "bg-violet-50 text-violet-600 border border-violet-200"
+                                                                    : "bg-slate-50 text-slate-400 border border-slate-100"
+                                                            }`}
+                                                        >
+                                                            <span>{seg.icon}</span>
+                                                            <span>{seg.time}</span>
+                                                            {isDone && <span>✓</span>}
+                                                            {isActive && <span>⚡</span>}
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                            {/* Mini progress bar */}
+                                            <div className="flex items-center gap-1.5">
+                                                <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                                                    <div
+                                                        className="h-full rounded-full transition-all duration-500 bg-gradient-to-r from-green-400 to-emerald-500"
+                                                        style={{ width: `${Math.min(100, (completedCount / 4) * 100)}%` }}
+                                                    />
+                                                </div>
+                                                <span className="text-[9px] text-slate-400 font-medium whitespace-nowrap">
+                                                    {completedCount}/4 đoạn
+                                                </span>
+                                            </div>
+                                        </div>
+                                    );
+                                })()}
                                 {/* Note row */}
                                 {isEditing && (
                                     <div className="flex gap-2">
