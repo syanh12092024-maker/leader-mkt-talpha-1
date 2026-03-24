@@ -591,7 +591,8 @@ export async function POST(req: NextRequest) {
                         body: JSON.stringify({
                             action: "reply_inbox",
                             message: message.trim(),
-                            message_tag: "POST_PURCHASE_UPDATE",
+                            messaging_type: "MESSAGE_TAG",
+                            tag: "HUMAN_AGENT",
                         }),
                     });
                     const sendData = await sendRes.json().catch(() => ({}));
@@ -643,7 +644,7 @@ export async function POST(req: NextRequest) {
                                 const sendImgRes = await fetch(apiBase, {
                                     method: "POST",
                                     headers: { "Content-Type": "application/json" },
-                                    body: JSON.stringify({ action: "reply_inbox", message: uploadUrl, message_tag: "POST_PURCHASE_UPDATE" }),
+                                    body: JSON.stringify({ action: "reply_inbox", message: uploadUrl, messaging_type: "MESSAGE_TAG", tag: "HUMAN_AGENT" }),
                                 });
                                 const sendImgData = await sendImgRes.json().catch(() => ({}));
                                 console.log(`[img] Send URL result:`, JSON.stringify(sendImgData).slice(0, 200));
