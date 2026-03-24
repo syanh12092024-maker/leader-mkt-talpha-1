@@ -604,37 +604,41 @@ export async function POST(req: NextRequest) {
                     }
                 }
 
-                // 2. Gửi hình ảnh: Upload → Litterbox hosting (72h) → Gửi URL qua tin nhắn text
+                // 2. Gửi hình ảnh: Upload → freeimage.host → Gửi URL qua tin nhắn text
                 if (imageFiles.length > 0 || imageStrings.length > 0) {
-                    const filesToSend: File[] = [...imageFiles];
+                    const filesToSend: { base64: string; type: string }[] = [];
+                    
+                    // Convert Files → base64
+                    for (const f of imageFiles) {
+                        const arrBuf = await f.arrayBuffer();
+                        filesToSend.push({ base64: Buffer.from(arrBuf).toString('base64'), type: f.type });
+                    }
+                    // Convert data URLs → base64
                     for (const s of imageStrings) {
                         if (s.startsWith('data:')) {
                             const m = s.match(/^data:([^;]+);base64,(.+)$/);
-                            if (m) {
-                                const buf = Buffer.from(m[2], 'base64');
-                                const ext = m[1].split('/')[1]?.replace('jpeg', 'jpg') || 'png';
-                                filesToSend.push(new File([buf], `img.${ext}`, { type: m[1] }));
-                            }
+                            if (m) filesToSend.push({ base64: m[2], type: m[1] });
                         }
                     }
 
                     for (let imgIdx = 0; imgIdx < filesToSend.length; imgIdx++) {
                         try {
-                            const file = filesToSend[imgIdx];
+                            const { base64 } = filesToSend[imgIdx];
                             
-                            // Upload ảnh lên Litterbox (catbox.moe — free, 72h)
+                            // Upload ảnh lên freeimage.host (free, permanent)
                             const uploadFd = new FormData();
-                            uploadFd.append('reqtype', 'fileupload');
-                            uploadFd.append('time', '72h');
-                            uploadFd.append('fileToUpload', file);
-                            const uploadRes = await fetch('https://litterbox.catbox.moe/resources/internals/api.php', {
+                            uploadFd.append('source', base64);
+                            uploadFd.append('type', 'base64');
+                            uploadFd.append('action', 'upload');
+                            const uploadRes = await fetch('https://freeimage.host/api/1/upload?key=6d207e02198a847aa98d0a2a901485a5', {
                                 method: 'POST', body: uploadFd,
                             });
-                            const uploadUrl = (await uploadRes.text()).trim();
-                            console.log(`[img] Upload img${imgIdx} for ${recipient.name}: ${uploadUrl}`);
+                            const uploadData = await uploadRes.json().catch(() => ({}));
+                            const uploadUrl = uploadData?.image?.url;
+                            console.log(`[img] Upload img${imgIdx} for ${recipient.name}: ${uploadUrl || 'FAILED'}`);
 
-                            if (uploadUrl.startsWith('http')) {
-                                // Gửi URL qua tin nhắn text
+                            if (uploadUrl) {
+                                // Gửi URL qua tin nhắn text (Pancake API)
                                 const sendImgRes = await fetch(apiBase, {
                                     method: "POST",
                                     headers: { "Content-Type": "application/json" },
@@ -648,7 +652,7 @@ export async function POST(req: NextRequest) {
                                 }
                             } else {
                                 imageSuccess = false;
-                                console.error(`[img] Litterbox upload FAILED: ${uploadUrl}`);
+                                console.error(`[img] freeimage.host upload FAILED:`, JSON.stringify(uploadData).slice(0, 200));
                             }
                             
                             await new Promise(resolve => setTimeout(resolve, 300));
