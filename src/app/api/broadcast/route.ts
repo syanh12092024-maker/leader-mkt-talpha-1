@@ -398,32 +398,75 @@ async function generatePageAccessToken(
     }
 }
 
-// ─── Facebook Graph API: Get Page Access Token ────────────────────────────────
-// Dùng user access_token từ meta_ads config để lấy page token
-const fbPageTokenCache = new Map<string, { token: string; expires: number }>();
+// ─── Facebook Graph API: Get ALL Page Access Tokens ───────────────────────────
+// Pancake page IDs ≠ Facebook page IDs → phải lấy tất cả từ /me/accounts
+const fbAllPagesCache: { pages: Map<string, string>; byName: Map<string, string>; expires: number } = {
+    pages: new Map(), byName: new Map(), expires: 0
+};
 
-async function getFacebookPageToken(pageId: string, userAccessToken: string): Promise<string | null> {
-    // Cache 1 giờ
-    const cached = fbPageTokenCache.get(pageId);
-    if (cached && cached.expires > Date.now()) return cached.token;
+async function loadFacebookPages(userAccessToken: string): Promise<void> {
+    if (fbAllPagesCache.expires > Date.now()) return; // Cache valid
     
-    try {
-        const res = await fetch(
-            `https://graph.facebook.com/v21.0/${pageId}?fields=access_token&access_token=${userAccessToken}`
-        );
+    fbAllPagesCache.pages.clear();
+    fbAllPagesCache.byName.clear();
+    
+    let url = `https://graph.facebook.com/v21.0/me/accounts?access_token=${userAccessToken}&limit=100&fields=id,name,access_token`;
+    let pageCount = 0;
+    
+    // Pagination — lấy hết tất cả pages
+    while (url) {
+        const res = await fetch(url);
         const data = await res.json();
-        if (data.access_token) {
-            fbPageTokenCache.set(pageId, { token: data.access_token, expires: Date.now() + 3600000 });
-            console.log(`[fb] Page token OK for ${pageId}`);
-            return data.access_token;
+        if (!data.data) break;
+        
+        for (const page of data.data) {
+            if (page.access_token) {
+                fbAllPagesCache.pages.set(String(page.id), page.access_token);
+                // Cache by normalized name for fuzzy matching
+                const normName = (page.name || '').toLowerCase().trim();
+                fbAllPagesCache.byName.set(normName, page.access_token);
+                pageCount++;
+            }
         }
-        console.error(`[fb] Page token failed for ${pageId}:`, data.error?.message || data);
-        return null;
-    } catch (err) {
-        console.error(`[fb] Page token error:`, err);
-        return null;
+        
+        url = data.paging?.next || '';
     }
+    
+    fbAllPagesCache.expires = Date.now() + 3600000; // Cache 1 giờ
+    console.log(`[fb] Loaded ${pageCount} Facebook page tokens`);
 }
+
+async function getFacebookPageToken(pageId: string, userAccessToken: string, pageName?: string): Promise<string | null> {
+    await loadFacebookPages(userAccessToken);
+    
+    // Try by page ID first
+    const byId = fbAllPagesCache.pages.get(pageId);
+    if (byId) return byId;
+    
+    // Try by page name (fuzzy match — Pancake page name might match FB page name)
+    if (pageName) {
+        const normName = pageName.toLowerCase().trim();
+        const byName = fbAllPagesCache.byName.get(normName);
+        if (byName) return byName;
+        
+        // Partial match
+        for (const [name, token] of fbAllPagesCache.byName) {
+            if (name.includes(normName) || normName.includes(name)) return token;
+        }
+    }
+    
+    // Last resort: try Graph API directly (might work if IDs happen to match)
+    try {
+        const res = await fetch(`https://graph.facebook.com/v21.0/${pageId}?fields=access_token&access_token=${userAccessToken}`);
+        const data = await res.json();
+        if (data.access_token) return data.access_token;
+    } catch { /* ignore */ }
+    
+    console.error(`[fb] No page token found for pageId=${pageId} name=${pageName}`);
+    console.error(`[fb] Available pages: ${Array.from(fbAllPagesCache.pages.keys()).join(', ')}`);
+    return null;
+}
+
 
 // ═══ SERVER-SIDE DEDUP CACHE ═══
 // Chống gửi lặp: từ chối gửi cùng PSID trong 5 phút
@@ -578,10 +621,26 @@ export async function POST(req: NextRequest) {
                     }
 
                     // Get Facebook Page Token (from meta_ads user token)
+                    // Pancake page IDs ≠ FB page IDs → need name lookup
                     const fbUserToken = config.meta_ads?.access_token;
                     let fbPageToken: string | null = null;
                     if (fbUserToken) {
-                        fbPageToken = await getFacebookPageToken(pageId, fbUserToken);
+                        // Try to find page name from POSCake shops config
+                        let pageName: string | undefined;
+                        for (const shop of config.poscake.shops) {
+                            try {
+                                const shopRes = await fetch(`${config.poscake.api_url}/shops/${shop.shop_id}?api_key=${shop.api_key}`);
+                                const shopData = await shopRes.json();
+                                const pages = shopData?.shop?.pages || [];
+                                const match = pages.find((p: { id: number | string; name?: string }) => String(p.id) === pageId);
+                                if (match?.name) {
+                                    pageName = match.name;
+                                    console.log(`[fb] Found page name for ${pageId}: "${pageName}"`);
+                                    break;
+                                }
+                            } catch { /* continue */ }
+                        }
+                        fbPageToken = await getFacebookPageToken(pageId, fbUserToken, pageName);
                     }
 
                     for (let imgIdx = 0; imgIdx < filesToSend.length; imgIdx++) {
