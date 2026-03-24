@@ -462,8 +462,10 @@ export default function BroadcastTab() {
     }, []);
 
     // Send a specific box's message
-    const sendingLockRef = useRef(false); // Lock chống double-fire
+    const sendingLockRef = useRef(false);
     const [batchProgress, setBatchProgress] = useState<{ sent: number; total: number } | null>(null);
+    const [sendingLog, setSendingLog] = useState<{ name: string; status: 'pending' | 'sending' | 'success' | 'error'; error?: string }[]>([]);
+    const logScrollRef = useRef<HTMLDivElement>(null);
 
     const handleSendBox = async (boxIdx: number) => {
         // ── Guard chống gọi lặp ──
@@ -474,6 +476,7 @@ export default function BroadcastTab() {
         sendingLockRef.current = true;
         setIsSending(true);
         setSendResults(null);
+        setSendingLog([]); // Reset log
 
         abortControllerRef.current = new AbortController();
         const signal = abortControllerRef.current.signal;
@@ -502,19 +505,25 @@ export default function BroadcastTab() {
             }
 
             // ── GỬI TỪNG NGƯỜI 1 — CLIENT LOOP ──
-            // Mỗi API call chỉ xử lý 1 recipient (~1-2s) → KHÔNG timeout → KHÔNG retry → KHÔNG lặp
             const allResults: SendResult[] = [];
 
+            // Khởi tạo log cho tất cả recipients
+            setSendingLog(allRecipients.map(r => ({ name: r.name, status: 'pending' as const })));
+
             for (let i = 0; i < allRecipients.length; i++) {
-                // Check abort trước mỗi request
                 if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
 
                 const recipient = allRecipients[i];
                 setBatchProgress({ sent: i, total: allRecipients.length });
 
+                // Mark current as 'sending'
+                setSendingLog(prev => prev.map((item, idx) => idx === i ? { ...item, status: 'sending' as const } : item));
+                // Auto-scroll
+                setTimeout(() => logScrollRef.current?.scrollTo({ top: logScrollRef.current.scrollHeight, behavior: 'smooth' }), 50);
+
                 try {
                     const payload: Record<string, unknown> = {
-                        recipients: [recipient],  // CHỈ 1 NGƯỜI
+                        recipients: [recipient],
                         message: msg || '',
                     };
                     if (imageUrls.length > 0) payload.images = imageUrls;
@@ -528,15 +537,18 @@ export default function BroadcastTab() {
                     const data = await res.json();
                     if (data.results && data.results.length > 0) {
                         allResults.push(...data.results);
+                        const ok = data.results[0]?.success;
+                        setSendingLog(prev => prev.map((item, idx) => idx === i ? { ...item, status: ok ? 'success' as const : 'error' as const, error: data.results[0]?.error } : item));
                     } else if (data.error) {
                         allResults.push({ psid: recipient.psid, name: recipient.name, success: false, error: data.error });
+                        setSendingLog(prev => prev.map((item, idx) => idx === i ? { ...item, status: 'error' as const, error: data.error } : item));
                     }
                 } catch (err) {
                     if (err instanceof Error && err.name === 'AbortError') throw err;
                     allResults.push({ psid: recipient.psid, name: recipient.name, success: false, error: "Network error" });
+                    setSendingLog(prev => prev.map((item, idx) => idx === i ? { ...item, status: 'error' as const, error: 'Network error' } : item));
                 }
 
-                // Delay 300ms giữa mỗi người
                 if (i < allRecipients.length - 1) {
                     await new Promise(resolve => setTimeout(resolve, 300));
                 }
@@ -587,16 +599,70 @@ export default function BroadcastTab() {
 
     return (
         <div className="space-y-4">
-            {/* Batch Progress */}
-            {batchProgress && (
-                <div className="rounded-lg border border-blue-200 bg-blue-50 p-3">
-                    <div className="flex items-center justify-between text-sm text-blue-700 font-medium mb-1.5">
-                        <span>⏳ Đang gửi... {batchProgress.sent}/{batchProgress.total} người</span>
-                        <span>{progressPercent}%</span>
+            {/* 📊 Tiến trình gửi realtime */}
+            {(batchProgress || sendingLog.length > 0) && (
+                <div className="rounded-xl border border-blue-200 bg-gradient-to-br from-blue-50 to-indigo-50 p-4 shadow-sm">
+                    {/* Header + Progress bar */}
+                    <div className="flex items-center justify-between text-sm font-semibold mb-2">
+                        <span className="text-blue-700 flex items-center gap-1.5">
+                            {batchProgress && batchProgress.sent < batchProgress.total ? (
+                                <><span className="animate-pulse">📡</span> Đang gửi...</>
+                            ) : sendingLog.length > 0 ? (
+                                <>✅ Hoàn tất</>
+                            ) : null}
+                        </span>
+                        <span className="text-blue-600 text-xs">
+                            {batchProgress ? `${batchProgress.sent}/${batchProgress.total} người` : ''}
+                            {' · '}
+                            {progressPercent}%
+                        </span>
                     </div>
-                    <div className="w-full bg-blue-100 rounded-full h-2">
-                        <div className="bg-blue-500 h-2 rounded-full transition-all duration-300" style={{ width: `${progressPercent}%` }} />
+                    <div className="w-full bg-blue-100 rounded-full h-2.5 mb-3 overflow-hidden">
+                        <div
+                            className={`h-2.5 rounded-full transition-all duration-500 ease-out ${
+                                progressPercent >= 100 ? 'bg-green-500' : 'bg-gradient-to-r from-blue-500 to-indigo-500'
+                            }`}
+                            style={{ width: `${progressPercent}%` }}
+                        />
                     </div>
+
+                    {/* Tổng kết */}
+                    {sendingLog.length > 0 && (
+                        <div className="flex items-center gap-3 text-xs mb-2">
+                            <span className="text-green-600 font-medium">
+                                ✅ {sendingLog.filter(l => l.status === 'success').length} thành công
+                            </span>
+                            <span className="text-red-500 font-medium">
+                                ❌ {sendingLog.filter(l => l.status === 'error').length} lỗi
+                            </span>
+                            <span className="text-amber-500 font-medium">
+                                ⏳ {sendingLog.filter(l => l.status === 'pending' || l.status === 'sending').length} đang chờ
+                            </span>
+                        </div>
+                    )}
+
+                    {/* Danh sách cuộn */}
+                    {sendingLog.length > 0 && (
+                        <div ref={logScrollRef} className="max-h-40 overflow-y-auto space-y-0.5 rounded-lg bg-white/60 border border-blue-100 p-2">
+                            {sendingLog.map((log, idx) => (
+                                <div key={idx} className={`flex items-center gap-2 px-2 py-1 rounded text-xs transition-colors ${
+                                    log.status === 'sending' ? 'bg-blue-50 text-blue-700 font-medium' :
+                                    log.status === 'success' ? 'text-green-700' :
+                                    log.status === 'error' ? 'text-red-600' :
+                                    'text-slate-400'
+                                }`}>
+                                    <span className="flex-shrink-0 w-4 text-center">
+                                        {log.status === 'pending' && '⏳'}
+                                        {log.status === 'sending' && <span className="animate-spin inline-block">⏳</span>}
+                                        {log.status === 'success' && '✅'}
+                                        {log.status === 'error' && '❌'}
+                                    </span>
+                                    <span className="truncate flex-1">{idx + 1}. {log.name}</span>
+                                    {log.error && <span className="text-red-400 text-[10px] truncate max-w-[120px]">{log.error}</span>}
+                                </div>
+                            ))}
+                        </div>
+                    )}
                 </div>
             )}
 
