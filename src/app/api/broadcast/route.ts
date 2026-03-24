@@ -326,6 +326,18 @@ async function generatePageAccessToken(
     }
 }
 
+// ═══ SERVER-SIDE DEDUP CACHE ═══
+// Chống gửi lặp: từ chối gửi cùng PSID trong 5 phút
+const DEDUP_WINDOW_MS = 5 * 60 * 1000; // 5 phút
+const sentCache = new Map<string, number>(); // psid -> timestamp
+
+function cleanupDedup() {
+    const now = Date.now();
+    for (const [key, ts] of sentCache) {
+        if (now - ts > DEDUP_WINDOW_MS) sentCache.delete(key);
+    }
+}
+
 export async function POST(req: NextRequest) {
     try {
         const config = loadConfig();
@@ -373,7 +385,21 @@ export async function POST(req: NextRequest) {
             error?: string;
         }> = [];
 
+        // Cleanup dedup cache
+        cleanupDedup();
+
         for (const recipient of recipients) {
+            // ═══ DEDUP CHECK: đã gửi PSID này trong 5 phút? ═══
+            const dedupKey = `${recipient.psid}_${recipient.pageFbId}`;
+            if (sentCache.has(dedupKey)) {
+                const lastSent = sentCache.get(dedupKey)!;
+                const secsAgo = Math.round((Date.now() - lastSent) / 1000);
+                console.log(`[DEDUP] BLOCKED: ${recipient.name} (${recipient.psid}) - đã gửi ${secsAgo}s trước`);
+                results.push({ psid: recipient.psid, name: recipient.name, success: true, error: `⚠️ Đã gửi ${secsAgo}s trước (dedup)` });
+                continue;
+            }
+            // Mark as sent TRƯỚC khi gửi
+            sentCache.set(dedupKey, Date.now());
             try {
                 const pageId = recipient.pageFbId;
                 const pageToken = pageTokens.get(pageId);

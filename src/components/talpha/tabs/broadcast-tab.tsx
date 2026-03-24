@@ -463,17 +463,22 @@ export default function BroadcastTab() {
 
     // Send a specific box's message
     const sendingLockRef = useRef(false);
+    const lastSentTimeRef = useRef(0); // Cooldown tracker
     const [batchProgress, setBatchProgress] = useState<{ sent: number; total: number } | null>(null);
     const [sendingLog, setSendingLog] = useState<{ name: string; status: 'pending' | 'sending' | 'success' | 'error'; error?: string }[]>([]);
     const logScrollRef = useRef<HTMLDivElement>(null);
+    const [sendDropdownOpen, setSendDropdownOpen] = useState(false);
 
     const handleSendBox = async (boxIdx: number) => {
-        // ── Guard chống gọi lặp ──
-        if (sendingLockRef.current) { console.warn('[broadcast] BLOCKED: already sending'); return; }
+        // ═══ TRIPLE GUARD chống gọi lặp ═══
+        if (sendingLockRef.current) { console.warn('[broadcast] BLOCKED: lock active'); return; }
+        const cooldownLeft = 10000 - (Date.now() - lastSentTimeRef.current);
+        if (cooldownLeft > 0) { console.warn(`[broadcast] BLOCKED: cooldown ${Math.ceil(cooldownLeft/1000)}s`); return; }
         const msg = messages[boxIdx]?.trim();
         const boxMedia = mediaArrays[boxIdx];
         if (selectedIds.size === 0 || (!msg && boxMedia.length === 0)) return;
         sendingLockRef.current = true;
+        setSendDropdownOpen(false); // Đóng dropdown ngay
         setIsSending(true);
         setSendResults(null);
         setSendingLog([]); // Reset log
@@ -567,6 +572,7 @@ export default function BroadcastTab() {
         } finally {
             setIsSending(false);
             sendingLockRef.current = false;
+            lastSentTimeRef.current = Date.now(); // Start cooldown
             setBatchProgress(null);
             abortControllerRef.current = null;
         }
@@ -966,25 +972,31 @@ export default function BroadcastTab() {
                         </div>
                         <div className="grid grid-cols-5 gap-2">
                             <div className="relative flex flex-col gap-1">
-                                <div className="relative group">
+                                <div className="relative">
                                     <button
                                         disabled={isSending || selectedIds.size === 0}
+                                        onClick={() => setSendDropdownOpen(prev => !prev)}
                                         className="w-full rounded-lg px-2 py-2.5 text-center transition-all border-2 border-red-300 bg-gradient-to-b from-red-500 to-orange-500 text-white shadow-md shadow-red-200 hover:shadow-red-300 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed text-sm font-bold"
                                     >
                                         ⚡ Bắn ngay ▾
                                     </button>
-                                    <div className="absolute top-full left-0 right-0 z-50 mt-1 bg-white rounded-lg shadow-xl border border-gray-200 overflow-hidden opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all">
-                                        {[0,1,2,3].map(i => (
-                                            <button
-                                                key={i}
-                                                onClick={() => { if (!isSending && !sendingLockRef.current) handleSendBox(i); }}
-                                                disabled={isSending || selectedIds.size === 0}
-                                                className="w-full px-3 py-2 text-left text-sm hover:bg-red-50 hover:text-red-600 transition-colors disabled:opacity-40"
-                                            >
-                                                Đoạn {i+1}
-                                            </button>
-                                        ))}
-                                    </div>
+                                    {sendDropdownOpen && !isSending && (
+                                        <div className="absolute top-full left-0 right-0 z-50 mt-1 bg-white rounded-lg shadow-xl border border-gray-200 overflow-hidden">
+                                            {[0,1,2,3].map(i => (
+                                                <button
+                                                    key={i}
+                                                    onClick={() => {
+                                                        setSendDropdownOpen(false);
+                                                        if (!sendingLockRef.current) handleSendBox(i);
+                                                    }}
+                                                    disabled={selectedIds.size === 0}
+                                                    className="w-full px-3 py-2 text-left text-sm hover:bg-red-50 hover:text-red-600 transition-colors disabled:opacity-40"
+                                                >
+                                                    Đoạn {i+1}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    )}
                                 </div>
                                 <button
                                     onClick={() => {
