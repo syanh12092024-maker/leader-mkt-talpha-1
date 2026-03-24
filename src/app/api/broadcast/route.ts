@@ -516,108 +516,66 @@ export async function POST(req: NextRequest) {
                     }
                 }
 
-                // 2. Gửi hình ảnh (nếu có) — Multi-method fallback
+                // 2. Gửi hình ảnh — Upload → Hosting → Gửi URL qua tin nhắn
+                // Facebook API (#100) không cho gửi file qua inbox → dùng image hosting
                 if (imageFiles.length > 0 || imageStrings.length > 0) {
-                    const allImages: Array<{ type: 'file'; data: File } | { type: 'base64'; data: string }> = [];
-                    for (const f of imageFiles) allImages.push({ type: 'file', data: f });
-                    for (const s of imageStrings) allImages.push({ type: 'base64', data: s });
+                    // Collect all image Files
+                    const filesToSend: File[] = [...imageFiles];
+                    for (const s of imageStrings) {
+                        if (s.startsWith('data:')) {
+                            const m = s.match(/^data:([^;]+);base64,(.+)$/);
+                            if (m) {
+                                const buf = Buffer.from(m[2], 'base64');
+                                const ext = m[1].split('/')[1]?.replace('jpeg', 'jpg') || 'png';
+                                filesToSend.push(new File([buf], `img.${ext}`, { type: m[1] }));
+                            }
+                        }
+                    }
 
-                    for (let imgIdx = 0; imgIdx < allImages.length; imgIdx++) {
-                        const img = allImages[imgIdx];
-                        let imgSent = false;
-                        const errors: string[] = [];
-
+                    for (let imgIdx = 0; imgIdx < filesToSend.length; imgIdx++) {
                         try {
-                            // ── METHOD 1: FormData file upload ──
-                            let fileToUpload: File;
-                            if (img.type === 'file') {
-                                fileToUpload = img.data as File;
-                            } else {
-                                // Convert base64 → Buffer → File
-                                const imgData = img.data as string;
-                                if (imgData.startsWith('data:')) {
-                                    const matches = imgData.match(/^data:([^;]+);base64,(.+)$/);
-                                    if (matches) {
-                                        const buf = Buffer.from(matches[2], 'base64');
-                                        const ext = matches[1].split('/')[1]?.replace('jpeg', 'jpg') || 'png';
-                                        fileToUpload = new File([buf], `img_${imgIdx}.${ext}`, { type: matches[1] });
-                                    } else {
-                                        errors.push('Invalid base64 format');
-                                        imageSuccess = false;
-                                        continue;
-                                    }
-                                } else {
-                                    errors.push('Not a data URL');
-                                    imageSuccess = false;
-                                    continue;
-                                }
-                            }
-
-                            // Try FormData upload
-                            const fd = new FormData();
-                            fd.append('action', 'reply_inbox');
-                            fd.append('file', fileToUpload);
-                            const r1 = await fetch(apiBase, { method: "POST", body: fd });
-                            const t1 = await r1.text();
-                            let d1: Record<string, unknown> = {};
-                            try { d1 = JSON.parse(t1); } catch { d1 = { _raw: t1.slice(0, 200) }; }
-                            console.log(`[img] M1 FormData for ${recipient.name}:`, JSON.stringify(d1).slice(0, 300));
+                            const file = filesToSend[imgIdx];
                             
-                            if (d1.success) {
-                                imgSent = true;
-                            } else {
-                                errors.push(`FormData: ${d1.original_error || d1.message || d1._raw || JSON.stringify(d1).slice(0, 100)}`);
-                                
-                                // ── METHOD 2: JSON attachment payload (Facebook Send API style) ──
-                                // First need image URL — upload to temp hosting or use data URL
-                                // Try sending attachment JSON directly
-                                const r2 = await fetch(apiBase, {
-                                    method: "POST",
-                                    headers: { "Content-Type": "application/json" },
-                                    body: JSON.stringify({
-                                        action: "reply_inbox",
-                                        attachment: {
-                                            type: "image",
-                                            payload: { url: `https://via.placeholder.com/200x200.png?text=img${imgIdx}` }
-                                        }
-                                    }),
-                                });
-                                const t2 = await r2.text();
-                                let d2: Record<string, unknown> = {};
-                                try { d2 = JSON.parse(t2); } catch { d2 = { _raw: t2.slice(0, 200) }; }
-                                console.log(`[img] M2 JSON-attach for ${recipient.name}:`, JSON.stringify(d2).slice(0, 300));
-                                
-                                if (d2.success) {
-                                    imgSent = true;
-                                } else {
-                                    errors.push(`JSON-attach: ${d2.original_error || d2.message || d2._raw || JSON.stringify(d2).slice(0, 100)}`);
-                                }
-                            }
-
-                            if (!imgSent) {
+                            // ── Upload ảnh lên Litterbox (catbox.moe, 72h) ──
+                            const uploadFd = new FormData();
+                            uploadFd.append('reqtype', 'fileupload');
+                            uploadFd.append('time', '72h');
+                            uploadFd.append('fileToUpload', file);
+                            
+                            const uploadRes = await fetch('https://litterbox.catbox.moe/resources/internals/api.php', {
+                                method: 'POST',
+                                body: uploadFd,
+                            });
+                            const uploadUrl = (await uploadRes.text()).trim();
+                            console.log(`[img] Upload img${imgIdx} for ${recipient.name}: ${uploadUrl}`);
+                            
+                            if (!uploadUrl.startsWith('http')) {
                                 imageSuccess = false;
-                                console.error(`[img] ALL methods failed for ${recipient.name} img${imgIdx}:`, errors.join(' | '));
+                                console.error(`[img] Upload FAILED: ${uploadUrl}`);
+                                continue;
                             }
-
+                            
+                            // ── Gửi URL qua tin nhắn text (Pancake API) ──
+                            const sendImgRes = await fetch(apiBase, {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({
+                                    action: "reply_inbox",
+                                    message: uploadUrl,
+                                }),
+                            });
+                            const sendImgData = await sendImgRes.json().catch(() => ({}));
+                            console.log(`[img] Send URL for ${recipient.name}:`, JSON.stringify(sendImgData).slice(0, 200));
+                            
+                            if (!sendImgData.success) {
+                                imageSuccess = false;
+                                console.error(`[img] Send URL FAILED:`, sendImgData.original_error || sendImgData.message);
+                            }
+                            
                             await new Promise(resolve => setTimeout(resolve, 300));
                         } catch (imgErr) {
                             imageSuccess = false;
-                            const errMsg = imgErr instanceof Error ? imgErr.message : String(imgErr);
-                            errors.push(`Exception: ${errMsg}`);
-                            console.error(`[img] Exception for img${imgIdx}:`, errMsg);
-                        }
-
-                        // Store errors for this recipient  
-                        if (errors.length > 0 && !imgSent) {
-                            // Override the error message with detailed info
-                            results.push({
-                                psid: recipient.psid,
-                                name: recipient.name,
-                                success: textSuccess,
-                                error: `⚠️ Ảnh lỗi: ${errors.join(' → ')}`
-                            });
-                            // Skip the generic result push below
-                            imageSuccess = false;
+                            console.error(`[img] Exception img${imgIdx}:`, imgErr instanceof Error ? imgErr.message : imgErr);
                         }
                     }
                 }
