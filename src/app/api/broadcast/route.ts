@@ -578,24 +578,36 @@ export async function POST(req: NextRequest) {
                 }
 
                 const convoId = recipient.conversationId || `${pageId}_${recipient.psid}`;
-                const apiBase = `https://pages.fm/api/v1/pages/${pageId}/conversations/${convoId}/messages?access_token=${crmToken}`;
+                const apiBase = `https://pages.fm/api/public_api/v1/pages/${pageId}/conversations/${convoId}/messages?page_access_token=${pageToken}`;
+
+                // ═══ DEBUG: Log full request details ═══
+                console.log(`[broadcast][DEBUG] ━━━ SEND TO: ${recipient.name} (${recipient.psid}) ━━━`);
+                console.log(`[broadcast][DEBUG] pageId=${pageId}, convoId=${convoId}`);
+                console.log(`[broadcast][DEBUG] URL=${apiBase.replace(pageToken, 'TOKEN_HIDDEN')}`);
+                console.log(`[broadcast][DEBUG] conversationId from recipient: ${recipient.conversationId || 'MISSING (fallback used)'}`);
 
                 let textSuccess = true;
                 let imageSuccess = true;
 
                 // 1. Gửi tin nhắn text trước
                 if (message?.trim()) {
+                    const reqBody = {
+                        action: "reply_inbox",
+                        message: message.trim(),
+                    };
+                    console.log(`[broadcast][DEBUG] Request body:`, JSON.stringify(reqBody));
+                    
                     const sendRes = await fetch(apiBase, {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({
-                            action: "reply_inbox",
-                            message: message.trim(),
-                            messaging_type: "MESSAGE_TAG",
-                            tag: "HUMAN_AGENT",
-                        }),
+                        body: JSON.stringify(reqBody),
                     });
-                    const sendData = await sendRes.json().catch(() => ({}));
+                    const sendText = await sendRes.text();
+                    console.log(`[broadcast][DEBUG] Response status=${sendRes.status}, body=${sendText.slice(0, 500)}`);
+                    
+                    let sendData: Record<string, unknown> = {};
+                    try { sendData = JSON.parse(sendText); } catch { sendData = { raw: sendText.slice(0, 200) }; }
+                    
                     if (!sendData.success) {
                         textSuccess = false;
                         const errMsg = sendData.original_error || sendData.message || `HTTP ${sendRes.status}`;
@@ -644,7 +656,7 @@ export async function POST(req: NextRequest) {
                                 const sendImgRes = await fetch(apiBase, {
                                     method: "POST",
                                     headers: { "Content-Type": "application/json" },
-                                    body: JSON.stringify({ action: "reply_inbox", message: uploadUrl, messaging_type: "MESSAGE_TAG", tag: "HUMAN_AGENT" }),
+                                    body: JSON.stringify({ action: "reply_inbox", message: uploadUrl }),
                                 });
                                 const sendImgData = await sendImgRes.json().catch(() => ({}));
                                 console.log(`[img] Send URL result:`, JSON.stringify(sendImgData).slice(0, 200));
