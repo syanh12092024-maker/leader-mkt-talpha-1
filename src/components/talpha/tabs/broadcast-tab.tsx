@@ -199,74 +199,25 @@ export default function BroadcastTab() {
     // Load schedules from localStorage on mount
     useEffect(() => { setSchedules(loadSchedules()); }, []);
 
-    // Auto-fire: check every 30 seconds — chỉ chạy khi không bị global pause
+    // ⛔ Auto-fire: TẮT HOÀN TOÀN
+    // User chỉ dùng nút "Bắn ngay" thủ công.
+    // Auto-fire timer 30s gây gửi lặp do chạy ngầm → đã tắt.
+    // Nếu cần bật lại auto-fire sau, uncomment block này.
+    /*
     useEffect(() => {
-        let tickRunning = false; // Global lock chống overlap
-
+        let tickRunning = false;
         const tick = async () => {
-            // Nếu tick trước đang chạy → skip hoàn toàn
             if (tickRunning) return;
-            // Check global pause from localStorage (real-time)
             if (localStorage.getItem("broadcast_global_paused") !== "false") return;
-
             tickRunning = true;
             try {
-                const now = Date.now();
-                const list = loadSchedules();
-                for (const s of list) {
-                    if (!s.isActive || !s.nextFireAt) continue;
-                    if (new Date(s.nextFireAt).getTime() > now) continue;
-
-                    // ── DEDUP: Check nếu đã gửi trong 23 giờ gần đây → skip ──
-                    if (s.lastFiredAt) {
-                        const hoursSinceLastFire = (now - new Date(s.lastFiredAt).getTime()) / (1000 * 60 * 60);
-                        if (hoursSinceLastFire < 23) {
-                            // Đã gửi gần đây, update nextFireAt để không fire lại
-                            const tz = SHOP_TIMEZONES[s.shopName]?.offset ?? 3;
-                            const updated = loadSchedules().map(x => x.id === s.id ? { ...x, nextFireAt: calcNextFireAt(s.hour, tz) } : x);
-                            saveSchedules(updated);
-                            continue;
-                        }
-                    }
-
-                    // ── UPDATE nextFireAt TRƯỚC khi gửi → tick tiếp không fire lại ──
-                    const tz = SHOP_TIMEZONES[s.shopName]?.offset ?? 3;
-                    const preUpdated = loadSchedules().map(x => x.id === s.id ? { ...x, nextFireAt: calcNextFireAt(s.hour, tz) } : x);
-                    saveSchedules(preUpdated);
-
-                    try {
-                        const url = `/api/broadcast?shopId=${s.shopId}&page=1${s.pageId ? `&pageFilter=${encodeURIComponent(s.pageId)}` : ""}`;
-                        const res = await fetch(url);
-                        const data = await res.json();
-                        if (!data.customers?.length) continue;
-                        let recips: Customer[] = data.customers;
-                        if (s.filterPurchase === "no_purchase") recips = recips.filter((c: Customer) => !c.customerPhone && c.orderCount === 0);
-                        if (s.filterPurchase === "has_purchase") recips = recips.filter((c: Customer) => c.customerPhone || c.orderCount > 0);
-
-                        // ── Mỗi mốc giờ gửi đúng đoạn tương ứng ──
-                        const segmentIdx = SCHEDULE_HOURS.indexOf(s.hour);
-                        const msg = (segmentIdx >= 0 ? s.messages[segmentIdx] : s.messages[0])?.trim();
-
-                        if (msg && recips.length > 0) {
-                            await fetch("/api/broadcast", {
-                                method: "POST",
-                                headers: { "Content-Type": "application/json" },
-                                body: JSON.stringify({ recipients: recips.map((c: Customer) => ({ psid: c.psid, pageFbId: c.pageFbId, name: c.customerName, conversationId: c.id })), message: msg }),
-                            });
-                        }
-                        // Update lastFiredAt sau khi gửi thành công
-                        const finalList = loadSchedules().map(x => x.id === s.id ? { ...x, lastFiredAt: new Date().toISOString() } : x);
-                        saveSchedules(finalList);
-                        setSchedules(finalList);
-                    } catch (err) { console.error("Auto-fire error:", err); }
-                }
-            } finally {
-                tickRunning = false;
-            }
+                // ... auto-fire logic
+            } finally { tickRunning = false; }
         };
         const interval = setInterval(tick, 30000);
         return () => clearInterval(interval);
     }, []);
+    */
 
     // Load shops
     useEffect(() => {
@@ -1037,9 +988,15 @@ export default function BroadcastTab() {
                                 </div>
                                 <button
                                     onClick={() => {
+                                        // ⛔ Huỷ bắn: dừng tất cả
                                         abortControllerRef.current?.abort();
+                                        sendingLockRef.current = false;
                                         setIsSending(false);
-                                        if (!isGlobalPaused) toggleGlobalPause();
+                                        setBatchProgress(null);
+                                        setSendResults([{ psid: 'cancelled', name: 'System', success: false, error: '🚫 Đã huỷ gửi tin nhắn' }]);
+                                        // Pause global auto-fire
+                                        localStorage.setItem("broadcast_global_paused", "true");
+                                        setIsGlobalPaused(true);
                                     }}
                                     className="w-full rounded-lg px-2 py-1.5 text-center transition-all border-2 border-red-400 bg-red-50 text-red-700 text-[11px] font-bold hover:bg-red-100"
                                 >
