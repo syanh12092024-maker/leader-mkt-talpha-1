@@ -223,12 +223,26 @@ async function fetchCRMConversations(
             };
         });
 
+    // Collect unique page_ids for debugging
+    const uniquePageIds = new Map<string, number>();
+    for (const c of allConversations) {
+        const pid = String(c.page_id || 'unknown');
+        uniquePageIds.set(pid, (uniquePageIds.get(pid) || 0) + 1);
+    }
+
     return {
         customers: allCustomers,
         total: allCustomers.length,
         page: 1,
         totalPages: 1,
         source: "crm",
+        debug: {
+            rawTotal: allConversations.length,
+            filteredTotal: filteredConversations.length,
+            requestedPageId: pageId,
+            pageIdBreakdown: Object.fromEntries(uniquePageIds),
+            pagesScanned: currentPage - 1,
+        },
     };
 }
 
