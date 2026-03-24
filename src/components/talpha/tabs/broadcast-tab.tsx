@@ -599,72 +599,77 @@ export default function BroadcastTab() {
 
     return (
         <div className="space-y-4">
-            {/* 📊 Tiến trình gửi realtime */}
-            {(batchProgress || sendingLog.length > 0) && (
-                <div className="rounded-xl border border-blue-200 bg-gradient-to-br from-blue-50 to-indigo-50 p-4 shadow-sm">
-                    {/* Header + Progress bar */}
-                    <div className="flex items-center justify-between text-sm font-semibold mb-2">
-                        <span className="text-blue-700 flex items-center gap-1.5">
-                            {batchProgress && batchProgress.sent < batchProgress.total ? (
-                                <><span className="animate-pulse">📡</span> Đang gửi...</>
-                            ) : sendingLog.length > 0 ? (
-                                <>✅ Hoàn tất</>
-                            ) : null}
-                        </span>
-                        <span className="text-blue-600 text-xs">
-                            {batchProgress ? `${batchProgress.sent}/${batchProgress.total} người` : ''}
-                            {' · '}
-                            {progressPercent}%
-                        </span>
-                    </div>
-                    <div className="w-full bg-blue-100 rounded-full h-2.5 mb-3 overflow-hidden">
-                        <div
-                            className={`h-2.5 rounded-full transition-all duration-500 ease-out ${
-                                progressPercent >= 100 ? 'bg-green-500' : 'bg-gradient-to-r from-blue-500 to-indigo-500'
-                            }`}
-                            style={{ width: `${progressPercent}%` }}
-                        />
-                    </div>
-
-                    {/* Tổng kết */}
-                    {sendingLog.length > 0 && (
-                        <div className="flex items-center gap-3 text-xs mb-2">
-                            <span className="text-green-600 font-medium">
-                                ✅ {sendingLog.filter(l => l.status === 'success').length} thành công
-                            </span>
-                            <span className="text-red-500 font-medium">
-                                ❌ {sendingLog.filter(l => l.status === 'error').length} lỗi
-                            </span>
-                            <span className="text-amber-500 font-medium">
-                                ⏳ {sendingLog.filter(l => l.status === 'pending' || l.status === 'sending').length} đang chờ
-                            </span>
-                        </div>
-                    )}
-
-                    {/* Danh sách cuộn */}
-                    {sendingLog.length > 0 && (
-                        <div ref={logScrollRef} className="max-h-40 overflow-y-auto space-y-0.5 rounded-lg bg-white/60 border border-blue-100 p-2">
-                            {sendingLog.map((log, idx) => (
-                                <div key={idx} className={`flex items-center gap-2 px-2 py-1 rounded text-xs transition-colors ${
-                                    log.status === 'sending' ? 'bg-blue-50 text-blue-700 font-medium' :
-                                    log.status === 'success' ? 'text-green-700' :
-                                    log.status === 'error' ? 'text-red-600' :
-                                    'text-slate-400'
-                                }`}>
-                                    <span className="flex-shrink-0 w-4 text-center">
-                                        {log.status === 'pending' && '⏳'}
-                                        {log.status === 'sending' && <span className="animate-spin inline-block">⏳</span>}
-                                        {log.status === 'success' && '✅'}
-                                        {log.status === 'error' && '❌'}
-                                    </span>
-                                    <span className="truncate flex-1">{idx + 1}. {log.name}</span>
-                                    {log.error && <span className="text-red-400 text-[10px] truncate max-w-[120px]">{log.error}</span>}
-                                </div>
-                            ))}
-                        </div>
-                    )}
+            {/* 📊 Tiến trình gửi — luôn hiện cố định */}
+            <div className="rounded-xl border border-blue-200 bg-gradient-to-br from-blue-50 to-indigo-50 p-4 shadow-sm">
+                {/* Header + Progress bar */}
+                <div className="flex items-center justify-between text-sm font-semibold mb-2">
+                    <span className="text-blue-700 flex items-center gap-1.5">
+                        {batchProgress && batchProgress.sent < batchProgress.total ? (
+                            <><span className="animate-pulse">📡</span> Đang gửi...</>
+                        ) : sendingLog.length > 0 && sendingLog.every(l => l.status === 'success' || l.status === 'error') ? (
+                            <>✅ Hoàn tất</>
+                        ) : (
+                            <>📊 Tiến trình gửi tin</>
+                        )}
+                    </span>
+                    <span className="text-blue-600 text-xs">
+                        {batchProgress ? `${batchProgress.sent}/${batchProgress.total} người · ${progressPercent}%` : sendingLog.length > 0 ? '100%' : 'Chưa gửi'}
+                    </span>
                 </div>
-            )}
+                <div className="w-full bg-blue-100 rounded-full h-2.5 mb-3 overflow-hidden">
+                    <div
+                        className={`h-2.5 rounded-full transition-all duration-500 ease-out ${
+                            !batchProgress && sendingLog.length === 0 ? 'bg-slate-300' :
+                            progressPercent >= 100 ? 'bg-green-500' : 'bg-gradient-to-r from-blue-500 to-indigo-500'
+                        }`}
+                        style={{ width: `${(!batchProgress && sendingLog.length === 0) ? 0 : progressPercent}%` }}
+                    />
+                </div>
+
+                {/* Tổng kết */}
+                {sendingLog.length > 0 ? (
+                    <div className="flex items-center gap-3 text-xs mb-2">
+                        <span className="text-green-600 font-medium">
+                            ✅ {sendingLog.filter(l => l.status === 'success').length} thành công
+                        </span>
+                        <span className="text-red-500 font-medium">
+                            ❌ {sendingLog.filter(l => l.status === 'error').length} lỗi
+                        </span>
+                        <span className="text-amber-500 font-medium">
+                            ⏳ {sendingLog.filter(l => l.status === 'pending' || l.status === 'sending').length} đang chờ
+                        </span>
+                    </div>
+                ) : (
+                    <p className="text-xs text-slate-400 mb-2">Chọn khách hàng và bấm "⚡ Bắn ngay" để bắt đầu gửi tin nhắn</p>
+                )}
+
+                {/* Danh sách cuộn */}
+                {sendingLog.length > 0 ? (
+                    <div ref={logScrollRef} className="max-h-40 overflow-y-auto space-y-0.5 rounded-lg bg-white/60 border border-blue-100 p-2">
+                        {sendingLog.map((log, idx) => (
+                            <div key={idx} className={`flex items-center gap-2 px-2 py-1 rounded text-xs transition-colors ${
+                                log.status === 'sending' ? 'bg-blue-50 text-blue-700 font-medium' :
+                                log.status === 'success' ? 'text-green-700' :
+                                log.status === 'error' ? 'text-red-600' :
+                                'text-slate-400'
+                            }`}>
+                                <span className="flex-shrink-0 w-4 text-center">
+                                    {log.status === 'pending' && '⏳'}
+                                    {log.status === 'sending' && <span className="animate-spin inline-block">⏳</span>}
+                                    {log.status === 'success' && '✅'}
+                                    {log.status === 'error' && '❌'}
+                                </span>
+                                <span className="truncate flex-1">{idx + 1}. {log.name}</span>
+                                {log.error && <span className="text-red-400 text-[10px] truncate max-w-[120px]">{log.error}</span>}
+                            </div>
+                        ))}
+                    </div>
+                ) : (
+                    <div className="rounded-lg bg-white/60 border border-blue-100 p-3 text-center text-xs text-slate-300">
+                        Chưa có dữ liệu gửi
+                    </div>
+                )}
+            </div>
 
             {/* Header */}
             <div className="flex items-center justify-between">
