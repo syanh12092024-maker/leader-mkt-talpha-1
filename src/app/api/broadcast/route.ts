@@ -395,7 +395,7 @@ export async function POST(req: NextRequest) {
                 const lastSent = sentCache.get(dedupKey)!;
                 const secsAgo = Math.round((Date.now() - lastSent) / 1000);
                 console.log(`[DEDUP] BLOCKED: ${recipient.name} (${recipient.psid}) - đã gửi ${secsAgo}s trước`);
-                results.push({ psid: recipient.psid, name: recipient.name, success: true, error: `⚠️ Đã gửi ${secsAgo}s trước (dedup)` });
+                results.push({ psid: recipient.psid, name: recipient.name, success: false, error: `⚠️ Đã gửi ${secsAgo}s trước (chặn lặp)` });
                 continue;
             }
             // Mark as sent TRƯỚC khi gửi

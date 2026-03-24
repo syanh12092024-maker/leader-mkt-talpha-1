@@ -470,21 +470,36 @@ export default function BroadcastTab() {
     const [sendDropdownOpen, setSendDropdownOpen] = useState(false);
 
     const handleSendBox = async (boxIdx: number) => {
-        // ═══ TRIPLE GUARD chống gọi lặp ═══
-        if (sendingLockRef.current) { console.warn('[broadcast] BLOCKED: lock active'); return; }
+        // ═══ NUCLEAR GUARD: window-level global flag ═══
+        // Không bị reset khi React re-render, không bị bypass bởi multiple component instances
+        if ((window as unknown as Record<string, boolean>).__broadcastSending) {
+            console.warn('[broadcast] BLOCKED by window flag');
+            return;
+        }
+        if (sendingLockRef.current) {
+            console.warn('[broadcast] BLOCKED by ref lock');
+            return;
+        }
         const cooldownLeft = 10000 - (Date.now() - lastSentTimeRef.current);
-        if (cooldownLeft > 0) { console.warn(`[broadcast] BLOCKED: cooldown ${Math.ceil(cooldownLeft/1000)}s`); return; }
+        if (cooldownLeft > 0) {
+            console.warn(`[broadcast] BLOCKED: cooldown ${Math.ceil(cooldownLeft/1000)}s`);
+            return;
+        }
         const msg = messages[boxIdx]?.trim();
         const boxMedia = mediaArrays[boxIdx];
         if (selectedIds.size === 0 || (!msg && boxMedia.length === 0)) return;
+
+        // Set ALL locks
+        (window as unknown as Record<string, boolean>).__broadcastSending = true;
         sendingLockRef.current = true;
-        setSendDropdownOpen(false); // Đóng dropdown ngay
+        setSendDropdownOpen(false);
         setIsSending(true);
         setSendResults(null);
-        setSendingLog([]); // Reset log
+        setSendingLog([]);
 
-        abortControllerRef.current = new AbortController();
-        const signal = abortControllerRef.current.signal;
+        const controller = new AbortController();
+        abortControllerRef.current = controller;
+        const signal = controller.signal;
 
         const allRecipients = customers
             .filter((c) => selectedIds.has(c.id))
@@ -570,9 +585,11 @@ export default function BroadcastTab() {
                 setSendResults([{ psid: "error", name: "System", success: false, error: "Network error" }]);
             }
         } finally {
+            // Release ALL locks
+            (window as unknown as Record<string, boolean>).__broadcastSending = false;
             setIsSending(false);
             sendingLockRef.current = false;
-            lastSentTimeRef.current = Date.now(); // Start cooldown
+            lastSentTimeRef.current = Date.now(); // Start 10s cooldown
             setBatchProgress(null);
             abortControllerRef.current = null;
         }
