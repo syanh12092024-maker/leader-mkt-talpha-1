@@ -527,18 +527,31 @@ export default function BroadcastTab() {
                 setTimeout(() => logScrollRef.current?.scrollTo({ top: logScrollRef.current.scrollHeight, behavior: 'smooth' }), 50);
 
                 try {
-                    const payload: Record<string, unknown> = {
-                        recipients: [recipient],
-                        message: msg || '',
-                    };
-                    if (imageData.length > 0) payload.images = imageData;
-
-                    const res = await fetch("/api/broadcast", {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify(payload),
-                        signal,
-                    });
+                    let res: Response;
+                    if (imageData.length > 0) {
+                        // Gửi FormData để tránh Vercel JSON body limit 4.5MB
+                        const fd = new FormData();
+                        fd.append('recipients', JSON.stringify([recipient]));
+                        fd.append('message', msg || '');
+                        // Convert base64 data URLs → Blob → File
+                        for (let imgIdx = 0; imgIdx < imageData.length; imgIdx++) {
+                            const imgStr = imageData[imgIdx];
+                            if (imgStr.startsWith('data:')) {
+                                const resp = await fetch(imgStr);
+                                const blob = await resp.blob();
+                                const ext = blob.type.split('/')[1]?.replace('jpeg', 'jpg') || 'png';
+                                fd.append('images', new File([blob], `img_${imgIdx}.${ext}`, { type: blob.type }));
+                            }
+                        }
+                        res = await fetch("/api/broadcast", { method: "POST", body: fd, signal });
+                    } else {
+                        res = await fetch("/api/broadcast", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ recipients: [recipient], message: msg || '' }),
+                            signal,
+                        });
+                    }
                     const data = await res.json();
                     if (data.results && data.results.length > 0) {
                         allResults.push(...data.results);
@@ -575,7 +588,7 @@ export default function BroadcastTab() {
             setIsSending(false);
             sendingLockRef.current = false;
             lastSentTimeRef.current = Date.now(); // Start 10s cooldown
-            setBatchProgress(null);
+            // GIỮ batchProgress ở sent=total để thanh bar hiển thị 100% xanh lá
             abortControllerRef.current = null;
         }
     };

@@ -395,14 +395,35 @@ function cleanupDedup() {
 export async function POST(req: NextRequest) {
     try {
         const config = loadConfig();
-        const body = await req.json();
-        const { recipients, message, images } = body as {
-            recipients: Array<{ psid: string; pageFbId: string; name: string; conversationId?: string }>;
-            message: string;
-            images?: string[]; // base64 data URLs
-        };
+        
+        // Parse body: hỗ trợ cả JSON lẫn FormData (multipart)
+        let recipients: Array<{ psid: string; pageFbId: string; name: string; conversationId?: string }>;
+        let message: string;
+        let imageFiles: File[] = []; // File objects from FormData
+        let imageStrings: string[] = []; // base64 strings from JSON
 
-        if (!recipients?.length || (!message?.trim() && (!images || images.length === 0))) {
+        const contentType = req.headers.get('content-type') || '';
+        if (contentType.includes('multipart/form-data')) {
+            const formData = await req.formData();
+            recipients = JSON.parse(formData.get('recipients') as string || '[]');
+            message = (formData.get('message') as string) || '';
+            // getAll trả về tất cả files gửi với key 'images'
+            const imgEntries = formData.getAll('images');
+            for (const entry of imgEntries) {
+                if (entry instanceof File) {
+                    imageFiles.push(entry);
+                }
+            }
+            console.log(`[broadcast] FormData: ${recipients.length} recipients, ${imageFiles.length} image files`);
+        } else {
+            const body = await req.json();
+            recipients = body.recipients;
+            message = body.message || '';
+            imageStrings = body.images || [];
+        }
+
+        const hasImages = imageFiles.length > 0 || imageStrings.length > 0;
+        if (!recipients?.length || (!message?.trim() && !hasImages)) {
             return NextResponse.json(
                 { error: "Thiếu thông tin: recipients, message hoặc images" },
                 { status: 400 }
@@ -495,75 +516,71 @@ export async function POST(req: NextRequest) {
                     }
                 }
 
-                // 2. Gửi từng hình ảnh (nếu có) — trực tiếp qua Pancake FormData
-                if (images && images.length > 0) {
-                    for (let imgIdx = 0; imgIdx < images.length; imgIdx++) {
-                        const imgData = images[imgIdx];
+                // 2. Gửi hình ảnh (nếu có) — hỗ trợ File objects (FormData) + base64 strings (JSON)
+                if (imageFiles.length > 0 || imageStrings.length > 0) {
+                    // --- Case A: imageFiles từ FormData — forward trực tiếp ---
+                    for (let imgIdx = 0; imgIdx < imageFiles.length; imgIdx++) {
+                        try {
+                            const file = imageFiles[imgIdx];
+                            const formData = new FormData();
+                            formData.append('action', 'reply_inbox');
+                            formData.append('file', file);
+
+                            const imgRes = await fetch(apiBase, { method: "POST", body: formData });
+                            const imgResult = await imgRes.json().catch(() => ({}));
+                            console.log(`[broadcast] File upload for ${recipient.name} img${imgIdx}:`, JSON.stringify(imgResult).slice(0, 200));
+                            if (!imgResult.success) {
+                                imageSuccess = false;
+                                console.error(`[broadcast] File upload FAILED img ${imgIdx + 1}`);
+                            }
+                            await new Promise((resolve) => setTimeout(resolve, 300));
+                        } catch (imgErr) {
+                            imageSuccess = false;
+                            console.error(`[broadcast] File img ${imgIdx + 1} error:`, imgErr);
+                        }
+                    }
+                    // --- Case B: imageStrings từ JSON (base64/URL fallback) ---
+                    for (let imgIdx = 0; imgIdx < imageStrings.length; imgIdx++) {
+                        const imgData = imageStrings[imgIdx];
                         try {
                             let imgSent = false;
-
-                            // Xử lý base64 data URL → Buffer → File upload
                             if (imgData.startsWith("data:")) {
                                 const matches = imgData.match(/^data:([^;]+);base64,(.+)$/);
                                 if (matches) {
                                     const mimeType = matches[1];
-                                    const base64 = matches[2];
-                                    const buffer = Buffer.from(base64, 'base64');
+                                    const base64Data = matches[2];
+                                    const buffer = Buffer.from(base64Data, 'base64');
                                     const ext = mimeType.split('/')[1]?.replace('jpeg', 'jpg') || 'png';
                                     const fileName = `broadcast_${Date.now()}_${imgIdx}.${ext}`;
-
-                                    // Pancake API nhận file qua multipart/form-data
                                     const formData = new FormData();
                                     formData.append('action', 'reply_inbox');
                                     formData.append('file', new File([buffer], fileName, { type: mimeType }));
-
-                                    const imgRes = await fetch(apiBase, {
-                                        method: "POST",
-                                        body: formData,
-                                    });
+                                    const imgRes = await fetch(apiBase, { method: "POST", body: formData });
                                     const imgResult = await imgRes.json().catch(() => ({}));
-                                    console.log(`[broadcast] FormData upload result for ${recipient.name}:`, JSON.stringify(imgResult).slice(0, 200));
-                                    if (imgResult.success) { imgSent = true; }
+                                    console.log(`[broadcast] base64 upload for ${recipient.name}:`, JSON.stringify(imgResult).slice(0, 200));
+                                    if (imgResult.success) imgSent = true;
                                 }
-                            }
-                            // Xử lý URL — gửi qua attachment payload
-                            else if (imgData.startsWith("http://") || imgData.startsWith("https://")) {
-                                // Thử download ảnh từ URL rồi upload qua FormData
+                            } else if (imgData.startsWith("http")) {
                                 try {
                                     const dlRes = await fetch(imgData);
                                     if (dlRes.ok) {
                                         const arrayBuf = await dlRes.arrayBuffer();
-                                        const contentType = dlRes.headers.get('content-type') || 'image/png';
-                                        const ext = contentType.split('/')[1]?.replace('jpeg', 'jpg') || 'png';
-                                        const fileName = `broadcast_${Date.now()}_${imgIdx}.${ext}`;
-
+                                        const ct = dlRes.headers.get('content-type') || 'image/png';
+                                        const ext = ct.split('/')[1]?.replace('jpeg', 'jpg') || 'png';
                                         const formData = new FormData();
                                         formData.append('action', 'reply_inbox');
-                                        formData.append('file', new File([arrayBuf], fileName, { type: contentType }));
-
-                                        const imgRes = await fetch(apiBase, {
-                                            method: "POST",
-                                            body: formData,
-                                        });
+                                        formData.append('file', new File([arrayBuf], `broadcast_${Date.now()}_${imgIdx}.${ext}`, { type: ct }));
+                                        const imgRes = await fetch(apiBase, { method: "POST", body: formData });
                                         const imgResult = await imgRes.json().catch(() => ({}));
-                                        console.log(`[broadcast] URL→FormData upload result for ${recipient.name}:`, JSON.stringify(imgResult).slice(0, 200));
-                                        if (imgResult.success) { imgSent = true; }
+                                        if (imgResult.success) imgSent = true;
                                     }
-                                } catch (dlErr) {
-                                    console.error(`[broadcast] Download image URL failed:`, dlErr);
-                                }
+                                } catch (dlErr) { console.error(`[broadcast] URL download failed:`, dlErr); }
                             }
-
-                            if (!imgSent) {
-                                imageSuccess = false;
-                                console.error(`[broadcast] Image send FAILED for ${recipient.name}, img ${imgIdx + 1}`);
-                            }
-
-                            // Delay between images
+                            if (!imgSent) { imageSuccess = false; }
                             await new Promise((resolve) => setTimeout(resolve, 300));
                         } catch (imgErr) {
                             imageSuccess = false;
-                            console.error(`[broadcast] Image ${imgIdx + 1} error:`, imgErr);
+                            console.error(`[broadcast] String img ${imgIdx + 1} error:`, imgErr);
                         }
                     }
                 }
