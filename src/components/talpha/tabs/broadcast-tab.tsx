@@ -1078,11 +1078,13 @@ export default function BroadcastTab() {
                                 </span>
                             </div>
                         </div>
-                        <div className="w-full bg-blue-100 rounded-full h-2.5 overflow-hidden">
+                        <div className={`w-full rounded-full h-3 overflow-hidden transition-colors duration-500 ${
+                            progressPercent >= 100 && sendingLog.length > 0 ? 'bg-green-100' : 'bg-blue-100'
+                        }`}>
                             <div
-                                className={`h-2.5 rounded-full transition-all duration-500 ease-out ${
+                                className={`h-3 rounded-full transition-all duration-500 ease-out ${
                                     !batchProgress && sendingLog.length === 0 ? 'bg-slate-200' :
-                                    progressPercent >= 100 ? 'bg-green-500' : 'bg-gradient-to-r from-blue-500 to-indigo-500'
+                                    progressPercent >= 100 ? 'bg-gradient-to-r from-green-400 to-emerald-500' : 'bg-gradient-to-r from-blue-500 to-indigo-500'
                                 }`}
                                 style={{ width: `${(!batchProgress && sendingLog.length === 0) ? 0 : progressPercent}%` }}
                             />
