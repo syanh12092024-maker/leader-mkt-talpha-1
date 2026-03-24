@@ -138,11 +138,11 @@ async function fetchCRMConversations(
     _page: number
 ): Promise<object | null> {
     const limit = 50;
-    const allCustomers: Array<Record<string, unknown>> = [];
+    const allConversations: CRMConversation[] = [];
     let currentPage = 1;
     let emptyStreak = 0;
-    const maxEmptyPages = 5; // CRM API may have gaps — tolerate up to 5 empty pages
-    const maxPages = 30; // Safety limit
+    const maxEmptyPages = 3; // Giảm từ 5 xuống 3 — CRM page nhỏ không cần scan nhiều
+    const maxPages = 20; // Giảm từ 30 xuống 20
 
     // Loop through ALL pages, tolerating gaps
     while (emptyStreak < maxEmptyPages && currentPage <= maxPages) {
@@ -154,7 +154,7 @@ async function fetchCRMConversations(
 
             if (data.error_code) {
                 console.error(`[broadcast] CRM Error ${data.error_code}: ${data.message}`);
-                if (allCustomers.length === 0) return null;
+                if (allConversations.length === 0) return null;
                 break;
             }
 
@@ -169,42 +169,7 @@ async function fetchCRMConversations(
             // Reset empty streak when we find data
             emptyStreak = 0;
 
-            const batch = conversations
-                .filter((c) => c && c.id && (c.from_psid || c.from?.id))
-                .map((c) => {
-                    // Extract phone number — CRM returns objects like {phone_number: "0909..."}
-                    let phone = "";
-                    const phoneArr = c.recent_phone_numbers || [];
-                    if (phoneArr.length > 0) {
-                        const p = phoneArr[0];
-                        if (typeof p === 'string') {
-                            phone = p;
-                        } else if (p && typeof p === 'object') {
-                            phone = (p as Record<string, string>).phone_number || (p as Record<string, string>).captured || String(p);
-                        }
-                    }
-
-                    return {
-                        id: String(c.id || ""),
-                        customerName: String(c.from?.name || c.customers?.[0]?.name || "Không rõ tên"),
-                        customerPhone: phone,
-                        fbId: String(c.id || ""),
-                        psid: String(c.from_psid || c.from?.id || ""),
-                        pageFbId: String(c.page_id || pageId),
-                        customerId: String(c.customers?.[0]?.id || ""),
-                        conversationLink: `https://pages.fm/conversations/${String(c.id || "")}`,
-                        orderCount: 0,
-                        messageCount: Number(c.message_count) || 0,
-                        snippet: String(c.snippet || "").replace(/[\r\n]+/g, " ").slice(0, 100),
-                        tags: (c.tags || []).map((t: number) => String(t)),
-                        address: "",
-                        updatedAt: String(c.updated_at || c.inserted_at || ""),
-                        lastInteraction: String(c.last_customer_interactive_at || ""),
-                        source: "crm" as const,
-                    };
-                });
-
-            allCustomers.push(...batch);
+            allConversations.push(...conversations);
             currentPage++;
         } catch (err) {
             console.error(`[broadcast] CRM fetch page ${currentPage} error:`, err);
@@ -213,7 +178,50 @@ async function fetchCRMConversations(
         }
     }
 
-    console.log(`[broadcast] CRM loaded ${allCustomers.length} customers across ${currentPage - 1} pages`);
+    console.log(`[broadcast] CRM raw: ${allConversations.length} conversations across ${currentPage - 1} pages for pageId=${pageId}`);
+
+    // ═══ FILTER: chỉ giữ conversations thuộc đúng page_id ═══
+    // Pancake CRM có thể trả conversations từ nhiều pages (token-level access)
+    const filteredConversations = allConversations.filter(c => {
+        const cPageId = String(c.page_id || '');
+        return cPageId === pageId;
+    });
+
+    console.log(`[broadcast] CRM after page_id filter: ${filteredConversations.length} (filtered from ${allConversations.length})`);
+
+    const allCustomers = filteredConversations
+        .filter((c) => c && c.id && (c.from_psid || c.from?.id))
+        .map((c) => {
+            let phone = "";
+            const phoneArr = c.recent_phone_numbers || [];
+            if (phoneArr.length > 0) {
+                const p = phoneArr[0];
+                if (typeof p === 'string') {
+                    phone = p;
+                } else if (p && typeof p === 'object') {
+                    phone = (p as Record<string, string>).phone_number || (p as Record<string, string>).captured || String(p);
+                }
+            }
+
+            return {
+                id: String(c.id || ""),
+                customerName: String(c.from?.name || c.customers?.[0]?.name || "Không rõ tên"),
+                customerPhone: phone,
+                fbId: String(c.id || ""),
+                psid: String(c.from_psid || c.from?.id || ""),
+                pageFbId: String(c.page_id || pageId),
+                customerId: String(c.customers?.[0]?.id || ""),
+                conversationLink: `https://pages.fm/conversations/${String(c.id || "")}`,
+                orderCount: 0,
+                messageCount: Number(c.message_count) || 0,
+                snippet: String(c.snippet || "").replace(/[\r\n]+/g, " ").slice(0, 100),
+                tags: (c.tags || []).map((t: number) => String(t)),
+                address: "",
+                updatedAt: String(c.updated_at || c.inserted_at || ""),
+                lastInteraction: String(c.last_customer_interactive_at || ""),
+                source: "crm" as const,
+            };
+        });
 
     return {
         customers: allCustomers,
