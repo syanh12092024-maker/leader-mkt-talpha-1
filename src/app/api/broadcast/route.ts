@@ -604,10 +604,8 @@ export async function POST(req: NextRequest) {
                     }
                 }
 
-                // 2. Gửi hình ảnh qua Facebook Graph API Send API
-                // POST /me/messages with multipart/form-data filedata
+                // 2. Gửi hình ảnh: Upload → Litterbox hosting (72h) → Gửi URL qua tin nhắn text
                 if (imageFiles.length > 0 || imageStrings.length > 0) {
-                    // Collect all image Files
                     const filesToSend: File[] = [...imageFiles];
                     for (const s of imageStrings) {
                         if (s.startsWith('data:')) {
@@ -620,82 +618,37 @@ export async function POST(req: NextRequest) {
                         }
                     }
 
-                    // Get Facebook Page Token (from meta_ads user token)
-                    // Pancake page IDs ≠ FB page IDs → need name lookup
-                    const fbUserToken = config.meta_ads?.access_token;
-                    let fbPageToken: string | null = null;
-                    if (fbUserToken) {
-                        // Try to find page name from POSCake shops config
-                        let pageName: string | undefined;
-                        for (const shop of config.poscake.shops) {
-                            try {
-                                const shopRes = await fetch(`${config.poscake.api_url}/shops/${shop.shop_id}?api_key=${shop.api_key}`);
-                                const shopData = await shopRes.json();
-                                const pages = shopData?.shop?.pages || [];
-                                const match = pages.find((p: { id: number | string; name?: string }) => String(p.id) === pageId);
-                                if (match?.name) {
-                                    pageName = match.name;
-                                    console.log(`[fb] Found page name for ${pageId}: "${pageName}"`);
-                                    break;
-                                }
-                            } catch { /* continue */ }
-                        }
-                        fbPageToken = await getFacebookPageToken(pageId, fbUserToken, pageName);
-                    }
-
                     for (let imgIdx = 0; imgIdx < filesToSend.length; imgIdx++) {
                         try {
                             const file = filesToSend[imgIdx];
                             
-                            if (fbPageToken) {
-                                // ── Facebook Send API: multipart upload ──
-                                const fbFd = new FormData();
-                                fbFd.append('recipient', JSON.stringify({ id: recipient.psid }));
-                                fbFd.append('message', JSON.stringify({
-                                    attachment: {
-                                        type: 'image',
-                                        payload: { is_reusable: true }
-                                    }
-                                }));
-                                fbFd.append('filedata', file);
+                            // Upload ảnh lên Litterbox (catbox.moe — free, 72h)
+                            const uploadFd = new FormData();
+                            uploadFd.append('reqtype', 'fileupload');
+                            uploadFd.append('time', '72h');
+                            uploadFd.append('fileToUpload', file);
+                            const uploadRes = await fetch('https://litterbox.catbox.moe/resources/internals/api.php', {
+                                method: 'POST', body: uploadFd,
+                            });
+                            const uploadUrl = (await uploadRes.text()).trim();
+                            console.log(`[img] Upload img${imgIdx} for ${recipient.name}: ${uploadUrl}`);
 
-                                const fbRes = await fetch(
-                                    `https://graph.facebook.com/v21.0/me/messages?access_token=${fbPageToken}`,
-                                    { method: 'POST', body: fbFd }
-                                );
-                                const fbData = await fbRes.json().catch(() => ({}));
-                                console.log(`[fb-img] Send for ${recipient.name} img${imgIdx}:`, JSON.stringify(fbData).slice(0, 200));
-
-                                if (fbData.message_id) {
-                                    // Success!
-                                    console.log(`[fb-img] ✅ Image sent! message_id=${fbData.message_id}`);
-                                } else {
+                            if (uploadUrl.startsWith('http')) {
+                                // Gửi URL qua tin nhắn text
+                                const sendImgRes = await fetch(apiBase, {
+                                    method: "POST",
+                                    headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({ action: "reply_inbox", message: uploadUrl }),
+                                });
+                                const sendImgData = await sendImgRes.json().catch(() => ({}));
+                                console.log(`[img] Send URL result:`, JSON.stringify(sendImgData).slice(0, 200));
+                                if (!sendImgData.success) {
                                     imageSuccess = false;
-                                    const errMsg = fbData.error?.message || JSON.stringify(fbData).slice(0, 100);
-                                    console.error(`[fb-img] ❌ FAILED:`, errMsg);
+                                    console.error(`[img] Send URL FAILED:`, sendImgData.original_error || sendImgData.message);
                                 }
                             } else {
-                                // Fallback: upload to Litterbox → send URL as text
-                                console.log(`[img] No FB token, fallback to Litterbox hosting`);
-                                const uploadFd = new FormData();
-                                uploadFd.append('reqtype', 'fileupload');
-                                uploadFd.append('time', '72h');
-                                uploadFd.append('fileToUpload', file);
-                                const uploadRes = await fetch('https://litterbox.catbox.moe/resources/internals/api.php', {
-                                    method: 'POST', body: uploadFd,
-                                });
-                                const uploadUrl = (await uploadRes.text()).trim();
-                                if (uploadUrl.startsWith('http')) {
-                                    const sendImgRes = await fetch(apiBase, {
-                                        method: "POST",
-                                        headers: { "Content-Type": "application/json" },
-                                        body: JSON.stringify({ action: "reply_inbox", message: uploadUrl }),
-                                    });
-                                    const sendImgData = await sendImgRes.json().catch(() => ({}));
-                                    if (!sendImgData.success) imageSuccess = false;
-                                } else {
-                                    imageSuccess = false;
-                                }
+                                imageSuccess = false;
+                                console.error(`[img] Litterbox upload FAILED: ${uploadUrl}`);
                             }
                             
                             await new Promise(resolve => setTimeout(resolve, 300));
