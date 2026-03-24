@@ -139,12 +139,13 @@ async function fetchCRMConversations(
 ): Promise<object | null> {
     const limit = 50;
     const allConversations: CRMConversation[] = [];
+    const seenIds = new Set<string>(); // ═══ DEDUP: track IDs đã thấy ═══
     let currentPage = 1;
     let emptyStreak = 0;
-    const maxEmptyPages = 3; // Giảm từ 5 xuống 3 — CRM page nhỏ không cần scan nhiều
-    const maxPages = 20; // Giảm từ 30 xuống 20
+    const maxEmptyPages = 2;
+    const maxPages = 20;
 
-    // Loop through ALL pages, tolerating gaps
+    // Loop through pages, STOP when duplicates detected
     while (emptyStreak < maxEmptyPages && currentPage <= maxPages) {
         const url = `${apiUrl}/pages/${pageId}/conversations?access_token=${token}&limit=${limit}&page=${currentPage}`;
         
@@ -166,10 +167,26 @@ async function fetchCRMConversations(
                 continue;
             }
             
-            // Reset empty streak when we find data
-            emptyStreak = 0;
+            // ═══ DEDUP CHECK: nếu toàn bộ conversations trong page này đã thấy rồi → STOP ═══
+            let newCount = 0;
+            for (const c of conversations) {
+                const cId = String(c.id || '');
+                if (cId && !seenIds.has(cId)) {
+                    seenIds.add(cId);
+                    allConversations.push(c);
+                    newCount++;
+                }
+            }
 
-            allConversations.push(...conversations);
+            console.log(`[broadcast] CRM page ${currentPage}: ${conversations.length} returned, ${newCount} new, ${conversations.length - newCount} duplicates`);
+
+            if (newCount === 0) {
+                // Toàn bộ page này là duplicates → CRM pagination đã hết data thật
+                console.log(`[broadcast] CRM page ${currentPage}: ALL DUPLICATES → stopping pagination`);
+                break;
+            }
+            
+            emptyStreak = 0;
             currentPage++;
         } catch (err) {
             console.error(`[broadcast] CRM fetch page ${currentPage} error:`, err);
