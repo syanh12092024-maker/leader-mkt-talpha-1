@@ -272,6 +272,7 @@ async function fetchPOSCustomers(
 ): Promise<NextResponse> {
     const pageSize = 50;
     const allCustomers: Array<Record<string, unknown>> = [];
+    const seenIds = new Set<string>(); // Dedup giống CRM
     let currentPage = 1;
     let hasMore = true;
     const maxPages = 30;
@@ -308,7 +309,21 @@ async function fetchPOSCustomers(
                 source: "pos" as const,
             }));
 
-            allCustomers.push(...batch);
+            // Dedup: chỉ thêm customers chưa thấy
+            let newCount = 0;
+            for (const c of batch) {
+                const cId = String(c.id || '');
+                if (cId && !seenIds.has(cId)) {
+                    seenIds.add(cId);
+                    allCustomers.push(c);
+                    newCount++;
+                }
+            }
+
+            if (newCount === 0) {
+                // Toàn duplicates → stop
+                break;
+            }
 
             if (batch.length < pageSize) {
                 hasMore = false;
