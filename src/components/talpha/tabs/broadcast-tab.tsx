@@ -501,26 +501,24 @@ export default function BroadcastTab() {
                 }
             }
 
-            // ── GỬI THEO BATCH 5 NGƯỜI/REQUEST ──
-            // Tránh Vercel serverless timeout (10-60s) gây retry + gửi lặp
-            const BATCH_SIZE = 5;
+            // ── GỬI TỪNG NGƯỜI 1 — CLIENT LOOP ──
+            // Mỗi API call chỉ xử lý 1 recipient (~1-2s) → KHÔNG timeout → KHÔNG retry → KHÔNG lặp
             const allResults: SendResult[] = [];
-            const totalBatches = Math.ceil(allRecipients.length / BATCH_SIZE);
 
-            for (let batchIdx = 0; batchIdx < totalBatches; batchIdx++) {
-                // Check if aborted
+            for (let i = 0; i < allRecipients.length; i++) {
+                // Check abort trước mỗi request
                 if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
 
-                const batchStart = batchIdx * BATCH_SIZE;
-                const batch = allRecipients.slice(batchStart, batchStart + BATCH_SIZE);
-
-                // Update progress
-                setBatchProgress({ sent: batchStart, total: allRecipients.length });
-
-                const payload: Record<string, unknown> = { recipients: batch, message: msg || '' };
-                if (imageUrls.length > 0) payload.images = imageUrls;
+                const recipient = allRecipients[i];
+                setBatchProgress({ sent: i, total: allRecipients.length });
 
                 try {
+                    const payload: Record<string, unknown> = {
+                        recipients: [recipient],  // CHỈ 1 NGƯỜI
+                        message: msg || '',
+                    };
+                    if (imageUrls.length > 0) payload.images = imageUrls;
+
                     const res = await fetch("/api/broadcast", {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
@@ -528,19 +526,19 @@ export default function BroadcastTab() {
                         signal,
                     });
                     const data = await res.json();
-                    if (data.results) {
+                    if (data.results && data.results.length > 0) {
                         allResults.push(...data.results);
                     } else if (data.error) {
-                        batch.forEach(r => allResults.push({ psid: r.psid, name: r.name, success: false, error: data.error }));
+                        allResults.push({ psid: recipient.psid, name: recipient.name, success: false, error: data.error });
                     }
-                } catch (batchErr) {
-                    if (batchErr instanceof Error && batchErr.name === 'AbortError') throw batchErr;
-                    batch.forEach(r => allResults.push({ psid: r.psid, name: r.name, success: false, error: "Network error" }));
+                } catch (err) {
+                    if (err instanceof Error && err.name === 'AbortError') throw err;
+                    allResults.push({ psid: recipient.psid, name: recipient.name, success: false, error: "Network error" });
                 }
 
-                // Delay 500ms between batches
-                if (batchIdx < totalBatches - 1) {
-                    await new Promise(resolve => setTimeout(resolve, 500));
+                // Delay 300ms giữa mỗi người
+                if (i < allRecipients.length - 1) {
+                    await new Promise(resolve => setTimeout(resolve, 300));
                 }
             }
 
