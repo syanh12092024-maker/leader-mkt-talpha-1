@@ -578,7 +578,7 @@ export async function POST(req: NextRequest) {
                 }
 
                 const convoId = recipient.conversationId || `${pageId}_${recipient.psid}`;
-                const apiBase = `https://pages.fm/api/public_api/v1/pages/${pageId}/conversations/${convoId}/messages?page_access_token=${pageToken}`;
+                const apiBase = `https://pages.fm/api/v1/pages/${pageId}/conversations/${convoId}/messages?access_token=${crmToken}`;
 
                 let textSuccess = true;
                 let imageSuccess = true;
