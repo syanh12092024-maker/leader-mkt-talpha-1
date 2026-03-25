@@ -333,6 +333,35 @@ export default function BroadcastTab() {
         return result;
     }, [customers, filterPurchase, filterTimeRange, filterGender, filterActive]);
 
+    // ═══ 24h WINDOW STATS: tính số khách trong/ngoài 24h ═══
+    const windowStats = useMemo(() => {
+        const now = Date.now();
+        const cutoff24h = now - 86400000; // 24h ago
+        let within = 0;
+        let outside = 0;
+        const selectedCustomers = customers.filter(c => selectedIds.has(c.id));
+        for (const c of selectedCustomers) {
+            const t = new Date(c.lastInteraction || c.updatedAt).getTime();
+            if (t >= cutoff24h) within++;
+            else outside++;
+        }
+        return { within, outside, total: selectedCustomers.length };
+    }, [customers, selectedIds]);
+
+    const selectOnly24h = () => {
+        const now = Date.now();
+        const cutoff24h = now - 86400000;
+        const ids = new Set(
+            customers
+                .filter(c => {
+                    const t = new Date(c.lastInteraction || c.updatedAt).getTime();
+                    return t >= cutoff24h;
+                })
+                .map(c => c.id)
+        );
+        setSelectedIds(ids);
+    };
+
     const toggleSelectAll = () => {
         if (selectedIds.size === customers.length && customers.length > 0) {
             setSelectedIds(new Set());
@@ -755,6 +784,26 @@ export default function BroadcastTab() {
                     </div>
                 </div>
             </div>
+
+            {/* ═══ 24h WARNING BANNER ═══ */}
+            {windowStats.outside > 0 && windowStats.total > 0 && (
+                <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 flex items-start gap-3 shadow-sm">
+                    <AlertTriangle className="h-5 w-5 text-amber-500 flex-shrink-0 mt-0.5" />
+                    <div className="flex-1 text-sm">
+                        <p className="font-semibold text-amber-800">⚠️ Cảnh báo: {windowStats.outside}/{windowStats.total} khách ngoài 24h</p>
+                        <p className="text-amber-600 text-xs mt-1">
+                            Facebook chặn tin nhắn gửi cho khách không tương tác trong 24h gần nhất (lỗi #10). 
+                            Chỉ <span className="font-bold text-green-700">{windowStats.within}</span> khách trong 24h có thể nhận tin.
+                        </p>
+                        <button
+                            onClick={selectOnly24h}
+                            className="mt-2 px-3 py-1.5 text-xs font-semibold rounded-lg bg-green-600 text-white hover:bg-green-700 transition-colors shadow-sm"
+                        >
+                            ✅ Chỉ chọn {windowStats.within} khách trong 24h
+                        </button>
+                    </div>
+                </div>
+            )}
 
             {/* Customer List */}
             <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
