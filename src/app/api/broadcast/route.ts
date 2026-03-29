@@ -10,6 +10,12 @@ interface ShopConfig {
     shop_id: string;
 }
 
+interface FacebookConfig {
+    access_token: string;
+    app_id?: string;
+    app_secret?: string;
+}
+
 interface ScriptGeneratorConfig {
     poscake: {
         api_url: string;
@@ -23,6 +29,12 @@ interface ScriptGeneratorConfig {
         access_token: string;
         app_id?: string;
         app_secret?: string;
+    };
+    facebook_messaging?: {
+        app_id: string;
+        user_access_token: string;
+        app_secret?: string;
+        page_tokens?: Record<string, string>; // pageId → access_token (trực tiếp từ config)
     };
 }
 
@@ -374,6 +386,7 @@ async function fetchPOSCustomers(
 interface BroadcastRequest {
     recipients: Array<{ psid: string; pageFbId: string; name: string; conversationId?: string }>;
     message: string;
+    forceGraphAPI?: boolean;
 }
 
 // Generate Pancake Page Access Token
@@ -436,7 +449,23 @@ async function loadFacebookPages(userAccessToken: string): Promise<void> {
     console.log(`[fb] Loaded ${pageCount} Facebook page tokens`);
 }
 
-async function getFacebookPageToken(pageId: string, userAccessToken: string, pageName?: string): Promise<string | null> {
+async function getFacebookPageToken(pageId: string, userAccessToken: string, pageName?: string, configPageTokens?: Record<string, string>): Promise<string | null> {
+    // 1. Ưu tiên page_tokens trực tiếp từ config (không cần /me/accounts)
+    if (configPageTokens) {
+        const directToken = configPageTokens[pageId];
+        if (directToken) {
+            console.log(`[fb] Using direct page token from config for pageId=${pageId}`);
+            return directToken;
+        }
+        // Nếu config có page_tokens nhưng không có pageId cụ thể → dùng token đầu tiên làm fallback
+        const firstConfigToken = Object.values(configPageTokens)[0];
+        if (firstConfigToken) {
+            console.log(`[fb] pageId=${pageId} not in config page_tokens → using first config token as fallback`);
+            return firstConfigToken;
+        }
+    }
+
+    // 2. Fallback: lookup qua /me/accounts
     await loadFacebookPages(userAccessToken);
     
     // Try by page ID first
@@ -455,16 +484,130 @@ async function getFacebookPageToken(pageId: string, userAccessToken: string, pag
         }
     }
     
-    // Last resort: try Graph API directly (might work if IDs happen to match)
+    // 3. Last resort: try Graph API directly
     try {
         const res = await fetch(`https://graph.facebook.com/v21.0/${pageId}?fields=access_token&access_token=${userAccessToken}`);
         const data = await res.json();
         if (data.access_token) return data.access_token;
     } catch { /* ignore */ }
     
+    // 4. Use first available token from /me/accounts
+    const firstCachedToken = fbAllPagesCache.pages.values().next().value;
+    if (firstCachedToken) {
+        console.warn(`[fb] No exact match for pageId=${pageId} → using first cached token`);
+        return firstCachedToken;
+    }
+    
     console.error(`[fb] No page token found for pageId=${pageId} name=${pageName}`);
-    console.error(`[fb] Available pages: ${Array.from(fbAllPagesCache.pages.keys()).join(', ')}`);
     return null;
+}
+
+// ─── Facebook Graph API: Send Message via Send API ────────────────────────────
+// Thử lần lượt nhiều message tags: HUMAN_AGENT → POST_PURCHASE_UPDATE → ACCOUNT_UPDATE → RESPONSE
+// Error #100 = app chưa được approved tag đó → thử tag tiếp theo
+async function sendViaFacebookGraphAPI(
+    psid: string,
+    messageText: string,
+    pageAccessToken: string
+): Promise<{ success: boolean; error?: string; messageId?: string; tagUsed?: string }> {
+    const url = `https://graph.facebook.com/v21.0/me/messages?access_token=${pageAccessToken}`;
+    const tokenPrefix = pageAccessToken.slice(0, 10);
+    
+    // Tag fallback chain
+    const tagAttempts: Array<{ messaging_type: string; tag?: string; label: string }> = [
+        { messaging_type: "MESSAGE_TAG", tag: "HUMAN_AGENT",           label: "HUMAN_AGENT" },
+        { messaging_type: "MESSAGE_TAG", tag: "POST_PURCHASE_UPDATE",   label: "POST_PURCHASE_UPDATE" },
+        { messaging_type: "MESSAGE_TAG", tag: "ACCOUNT_UPDATE",         label: "ACCOUNT_UPDATE" },
+        { messaging_type: "RESPONSE",                                    label: "RESPONSE" },
+    ];
+
+    const errors: string[] = [];
+    for (const attempt of tagAttempts) {
+        try {
+            const body: Record<string, unknown> = {
+                recipient: { id: psid },
+                message: { text: messageText },
+                messaging_type: attempt.messaging_type,
+            };
+            if (attempt.tag) body.tag = attempt.tag;
+
+            console.log(`[fb-send] token=${tokenPrefix}... tag=${attempt.label} psid=${psid}`);
+            const res = await fetch(url, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(body),
+            });
+            const data = await res.json();
+
+            if (data.error) {
+                const code = data.error.code || data.error.error_code;
+                const msg = data.error.message || JSON.stringify(data.error);
+                const errEntry = `${attempt.label}[#${code}]:${msg.slice(0, 80)}`;
+                console.warn(`[fb-send] FAIL ${errEntry}`);
+                errors.push(errEntry);
+                // #100/#200 = no permission for tag → try next
+                // #10 = outside window → try next
+                // #190 = invalid/wrong token format (e.g. Pancake token used w/ Graph API)
+                if (code === 100 || code === 200 || code === 10 || code === 190 ||
+                    String(code) === '100' || String(code) === '200' || String(code) === '10' || String(code) === '190') {
+                    continue;
+                }
+                // Fatal errors (#551 blocked, #613 rate limit) → stop
+                return { success: false, error: `FB API: ${errEntry}` };
+            }
+
+            if (data.recipient_id && data.message_id) {
+                console.log(`[fb-send] ✅ tag=${attempt.label} token=${tokenPrefix}...`);
+                return { success: true, messageId: data.message_id, tagUsed: attempt.label };
+            }
+
+            errors.push(`${attempt.label}:unexpected=${JSON.stringify(data).slice(0, 50)}`);
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            console.error(`[fb-send] Exception ${attempt.label}:`, msg);
+            errors.push(`${attempt.label}:exception=${msg.slice(0, 50)}`);
+        }
+    }
+
+    const errSummary = errors.join(' | ');
+    console.error(`[fb-send] All tags exhausted. PSID=${psid} token=${tokenPrefix}... | ${errSummary}`);
+    return { success: false, error: `FB API (tất cả tags thất bại): ${errSummary}` };
+}
+
+// ─── Facebook Graph API: Send Image Attachment ────────────────────────────────
+async function sendImageViaFacebookGraphAPI(
+    psid: string,
+    imageUrl: string,
+    pageAccessToken: string
+): Promise<{ success: boolean; error?: string }> {
+    try {
+        const url = `https://graph.facebook.com/v21.0/me/messages?access_token=${pageAccessToken}`;
+        const body = {
+            recipient: { id: psid },
+            message: {
+                attachment: {
+                    type: "image",
+                    payload: { url: imageUrl, is_reusable: true },
+                },
+            },
+            messaging_type: "MESSAGE_TAG",
+            tag: "HUMAN_AGENT",
+        };
+
+        const res = await fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+        });
+        const data = await res.json();
+
+        if (data.error) {
+            return { success: false, error: `FB Image: ${data.error.message}` };
+        }
+        return { success: true };
+    } catch (err) {
+        return { success: false, error: `FB Image Error: ${err instanceof Error ? err.message : String(err)}` };
+    }
 }
 
 
@@ -487,6 +630,7 @@ export async function POST(req: NextRequest) {
         // Parse body: hỗ trợ cả JSON lẫn FormData (multipart)
         let recipients: Array<{ psid: string; pageFbId: string; name: string; conversationId?: string }>;
         let message: string;
+        let forceGraphAPI = false;
         let imageFiles: File[] = []; // File objects from FormData
         let imageStrings: string[] = []; // base64 strings from JSON
 
@@ -495,6 +639,7 @@ export async function POST(req: NextRequest) {
             const formData = await req.formData();
             recipients = JSON.parse(formData.get('recipients') as string || '[]');
             message = (formData.get('message') as string) || '';
+            forceGraphAPI = formData.get('forceGraphAPI') === 'true';
             // getAll trả về tất cả files gửi với key 'images'
             const imgEntries = formData.getAll('images');
             for (const entry of imgEntries) {
@@ -502,12 +647,13 @@ export async function POST(req: NextRequest) {
                     imageFiles.push(entry);
                 }
             }
-            console.log(`[broadcast] FormData: ${recipients.length} recipients, ${imageFiles.length} image files`);
+            console.log(`[broadcast] FormData: ${recipients.length} recipients, ${imageFiles.length} image files, forceGraphAPI=${forceGraphAPI}`);
         } else {
             const body = await req.json();
             recipients = body.recipients;
             message = body.message || '';
             imageStrings = body.images || [];
+            forceGraphAPI = body.forceGraphAPI === true;
         }
 
         const hasImages = imageFiles.length > 0 || imageStrings.length > 0;
@@ -519,12 +665,17 @@ export async function POST(req: NextRequest) {
         }
 
         const crmToken = config.pancake_crm?.api_token;
-        if (!crmToken) {
+        if (!crmToken && !forceGraphAPI) {
             return NextResponse.json(
                 { error: "Chưa cấu hình pancake_crm.api_token trong config." },
                 { status: 500 }
             );
         }
+
+        // Facebook Graph API token (for fallback or force mode)
+        // Prefer facebook_messaging token (Chat page app) over meta_ads token (Ads app)
+        const fbUserToken = config.facebook_messaging?.user_access_token || config.meta_ads?.access_token;
+        const hasFbToken = !!fbUserToken;
 
         // Group recipients by page to generate tokens per page
         const pageGroups = new Map<string, typeof recipients>();
@@ -534,11 +685,13 @@ export async function POST(req: NextRequest) {
             pageGroups.get(pageId)!.push(r);
         }
 
-        // Generate page tokens
+        // Generate page tokens (Pancake)
         const pageTokens = new Map<string, string>();
-        for (const pageId of pageGroups.keys()) {
-            const token = await generatePageAccessToken(pageId, crmToken);
-            if (token) pageTokens.set(pageId, token);
+        if (crmToken) {
+            for (const pageId of pageGroups.keys()) {
+                const token = await generatePageAccessToken(pageId, crmToken);
+                if (token) pageTokens.set(pageId, token);
+            }
         }
 
         const results: Array<{
@@ -546,7 +699,26 @@ export async function POST(req: NextRequest) {
             name: string;
             success: boolean;
             error?: string;
+            via?: 'pancake' | 'fb_graph_api';
         }> = [];
+
+        // Pre-load Facebook page tokens if needed
+        const fbPageTokens = new Map<string, string>();
+        const configPageTokens = config.facebook_messaging?.page_tokens;
+        if (hasFbToken && fbUserToken) {
+            try {
+                for (const pageId of pageGroups.keys()) {
+                    const fbToken = await getFacebookPageToken(pageId, fbUserToken, undefined, configPageTokens);
+                    if (fbToken) {
+                        fbPageTokens.set(pageId, fbToken);
+                        console.log(`[fb] Resolved token for pageId=${pageId}`);
+                    }
+                }
+                console.log(`[fb] Pre-loaded ${fbPageTokens.size} FB page tokens`);
+            } catch (err) {
+                console.error('[fb] Failed to pre-load FB page tokens:', err);
+            }
+        }
 
         // Cleanup dedup cache
         cleanupDedup();
@@ -566,14 +738,82 @@ export async function POST(req: NextRequest) {
             try {
                 const pageId = recipient.pageFbId;
                 const pageToken = pageTokens.get(pageId);
+                const fbPageToken = fbPageTokens.get(pageId);
 
+                // ═══ FORCE GRAPH API MODE ═══
+                if (forceGraphAPI) {
+                    if (!fbPageToken) {
+                        results.push({ psid: recipient.psid, name: recipient.name, success: false, error: `❌ Không có FB token cho page ${pageId}`, via: 'fb_graph_api' });
+                        continue;
+                    }
+                    let textOk = true;
+                    let imgOk = true;
+
+                    if (message?.trim()) {
+                        const fbResult = await sendViaFacebookGraphAPI(recipient.psid, message.trim(), fbPageToken);
+                        textOk = fbResult.success;
+                        if (!textOk) {
+                            results.push({ psid: recipient.psid, name: recipient.name, success: false, error: fbResult.error, via: 'fb_graph_api' });
+                            await new Promise(r => setTimeout(r, 500));
+                            continue;
+                        }
+                    }
+
+                    // Images via Graph API
+                    if (imageFiles.length > 0 || imageStrings.length > 0) {
+                        const filesToSend: { base64: string; type: string }[] = [];
+                        for (const f of imageFiles) {
+                            const arrBuf = await f.arrayBuffer();
+                            filesToSend.push({ base64: Buffer.from(arrBuf).toString('base64'), type: f.type });
+                        }
+                        for (const s of imageStrings) {
+                            if (s.startsWith('data:')) {
+                                const m = s.match(/^data:([^;]+);base64,(.+)$/);
+                                if (m) filesToSend.push({ base64: m[2], type: m[1] });
+                            }
+                        }
+                        for (const { base64 } of filesToSend) {
+                            try {
+                                // Upload to freeimage.host then send URL via Graph API
+                                const uploadFd = new FormData();
+                                uploadFd.append('source', base64);
+                                uploadFd.append('type', 'base64');
+                                uploadFd.append('action', 'upload');
+                                const uploadRes = await fetch('https://freeimage.host/api/1/upload?key=6d207e02198a847aa98d0a2a901485a5', { method: 'POST', body: uploadFd });
+                                const uploadData = await uploadRes.json().catch(() => ({}));
+                                const uploadUrl = uploadData?.image?.url;
+                                if (uploadUrl) {
+                                    const imgResult = await sendImageViaFacebookGraphAPI(recipient.psid, uploadUrl, fbPageToken);
+                                    if (!imgResult.success) imgOk = false;
+                                } else {
+                                    imgOk = false;
+                                }
+                                await new Promise(r => setTimeout(r, 300));
+                            } catch { imgOk = false; }
+                        }
+                    }
+
+                    if (textOk && imgOk) {
+                        results.push({ psid: recipient.psid, name: recipient.name, success: true, via: 'fb_graph_api' });
+                    } else if (textOk) {
+                        results.push({ psid: recipient.psid, name: recipient.name, success: true, error: '⚠️ Text OK, ảnh lỗi', via: 'fb_graph_api' });
+                    } else {
+                        results.push({ psid: recipient.psid, name: recipient.name, success: false, error: 'Gửi thất bại', via: 'fb_graph_api' });
+                    }
+                    await new Promise(r => setTimeout(r, 500));
+                    continue;
+                }
+
+                // ═══ NORMAL MODE: Pancake first, FB Graph API fallback ═══
                 if (!pageToken) {
-                    results.push({
-                        psid: recipient.psid,
-                        name: recipient.name,
-                        success: false,
-                        error: `Không tạo được token cho page ${pageId}`,
-                    });
+                    // No Pancake token → try FB Graph API directly
+                    if (fbPageToken && message?.trim()) {
+                        console.log(`[fb-fallback] No Pancake token for page ${pageId}, trying FB Graph API directly`);
+                        const fbResult = await sendViaFacebookGraphAPI(recipient.psid, message.trim(), fbPageToken);
+                        results.push({ psid: recipient.psid, name: recipient.name, success: fbResult.success, error: fbResult.error, via: 'fb_graph_api' });
+                    } else {
+                        results.push({ psid: recipient.psid, name: recipient.name, success: false, error: `Không tạo được token cho page ${pageId}` });
+                    }
                     continue;
                 }
 
@@ -588,6 +828,7 @@ export async function POST(req: NextRequest) {
 
                 let textSuccess = true;
                 let imageSuccess = true;
+                let sentVia: 'pancake' | 'fb_graph_api' = 'pancake';
 
                 // 1. Gửi tin nhắn text trước
                 if (message?.trim()) {
@@ -609,12 +850,60 @@ export async function POST(req: NextRequest) {
                     try { sendData = JSON.parse(sendText); } catch { sendData = { raw: sendText.slice(0, 200) }; }
                     
                     if (!sendData.success) {
-                        textSuccess = false;
-                        const errMsg = sendData.original_error || sendData.message || `HTTP ${sendRes.status}`;
-                        results.push({ psid: recipient.psid, name: recipient.name, success: false, error: `Text: ${String(errMsg)}` });
-                        // Delay before next recipient
-                        await new Promise((resolve) => setTimeout(resolve, 500));
-                        continue;
+                        // ═══ FB GRAPH API FALLBACK: Try HUMAN_AGENT tag (7 days window) ═══
+                        const errMsg = String(sendData.original_error || sendData.message || sendData.error || '');
+                        // Detect mọi biến thể lỗi ngoài 24h: error code #10, OOW, Outside, tiếng Việt
+                        const isOutside24h = 
+                            errMsg.includes('(#10)') ||
+                            errMsg.includes('error_code=10') ||
+                            /\berror[^\w]*10\b/i.test(errMsg) ||
+                            errMsg.toLowerCase().includes('outside') ||
+                            errMsg.toLowerCase().includes('ngoài khoảng') ||
+                            errMsg.toLowerCase().includes('ngoai khoang') ||
+                            errMsg.includes('Cannot send') ||
+                            errMsg.includes('OOW') ||
+                            errMsg.toLowerCase().includes('24-hour') ||
+                            errMsg.toLowerCase().includes('24h') ||
+                            sendData.error_code === 10 ||
+                            sendData.error_code === '10';
+                        
+                        if (isOutside24h) {
+                            // Chỉ dùng TalphaBot token — Pancake token không dùng được với Graph API (#190)
+                            const tokensToTry: Array<{ token: string; label: string }> = [];
+                            if (fbPageToken) tokensToTry.push({ token: fbPageToken, label: 'TalphaBot' });
+                            // NOTE: Pancake token bị loại — luôn trả #190 Bad signature với graph.facebook.com
+
+                            console.log(`[fb-fallback] ${recipient.name} | PSID=${recipient.psid} | pageId=${pageId} | tokens=${tokensToTry.map(t=>t.label).join(',')||'NONE (cần switch TalphaBot app sang Live mode)'}`);
+
+                            let fbSuccess = false;
+                            let fbError = '';
+                            for (const { token: tryToken, label } of tokensToTry) {
+                                console.log(`[fb-fallback] Trying ${label} token for ${recipient.name}`);
+                                const fbResult = await sendViaFacebookGraphAPI(recipient.psid, message.trim(), tryToken);
+                                if (fbResult.success) {
+                                    fbSuccess = true;
+                                    textSuccess = true;
+                                    sentVia = 'fb_graph_api';
+                                    console.log(`[fb-fallback] ✅ SUCCESS via ${label} token for ${recipient.name}`);
+                                    break;
+                                }
+                                fbError = `${label}: ${fbResult.error || ''}`;
+                                console.warn(`[fb-fallback] ${label} token failed: ${fbResult.error}`);
+                            }
+
+                            if (!fbSuccess) {
+                                textSuccess = false;
+                                results.push({ psid: recipient.psid, name: recipient.name, success: false, error: `Pancake: ${errMsg} → FB: ${fbError || 'Tất cả tokens thất bại'}`, via: 'fb_graph_api' });
+                                await new Promise((resolve) => setTimeout(resolve, 500));
+                                continue;
+                            }
+                        } else {
+                            textSuccess = false;
+                            const displayErr = sendData.original_error || sendData.message || `HTTP ${sendRes.status}`;
+                            results.push({ psid: recipient.psid, name: recipient.name, success: false, error: `Text: ${String(displayErr)}`, via: 'pancake' });
+                            await new Promise((resolve) => setTimeout(resolve, 500));
+                            continue;
+                        }
                     }
                 }
 
@@ -678,11 +967,11 @@ export async function POST(req: NextRequest) {
                 }
 
                 if (textSuccess && imageSuccess) {
-                    results.push({ psid: recipient.psid, name: recipient.name, success: true });
+                    results.push({ psid: recipient.psid, name: recipient.name, success: true, via: sentVia });
                 } else if (textSuccess && !imageSuccess) {
-                    results.push({ psid: recipient.psid, name: recipient.name, success: true, error: "⚠️ Text OK, ảnh lỗi" });
+                    results.push({ psid: recipient.psid, name: recipient.name, success: true, error: "⚠️ Text OK, ảnh lỗi", via: sentVia });
                 } else {
-                    results.push({ psid: recipient.psid, name: recipient.name, success: false, error: "Gửi thất bại" });
+                    results.push({ psid: recipient.psid, name: recipient.name, success: false, error: "Gửi thất bại", via: sentVia });
                 }
 
                 // Delay 500ms between recipients

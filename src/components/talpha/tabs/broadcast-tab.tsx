@@ -95,6 +95,7 @@ interface SendResult {
     name: string;
     success: boolean;
     error?: string;
+    via?: 'pancake' | 'fb_graph_api';
 }
 
 // ─── Schedule types + localStorage ───────────────────────────────────────────
@@ -497,6 +498,7 @@ export default function BroadcastTab() {
     const [sendingLog, setSendingLog] = useState<{ name: string; status: 'pending' | 'sending' | 'success' | 'error'; error?: string }[]>([]);
     const logScrollRef = useRef<HTMLDivElement>(null);
     const [sendDropdownOpen, setSendDropdownOpen] = useState(false);
+    const [forceGraphAPI, setForceGraphAPI] = useState(false);
 
     const handleSendBox = async (boxIdx: number) => {
         // ═══ NUCLEAR GUARD: window-level global flag ═══
@@ -572,12 +574,13 @@ export default function BroadcastTab() {
                                 fd.append('images', new File([blob], `img_${imgIdx}.${ext}`, { type: blob.type }));
                             }
                         }
+                        if (forceGraphAPI) fd.append('forceGraphAPI', 'true');
                         res = await fetch("/api/broadcast", { method: "POST", body: fd, signal });
                     } else {
                         res = await fetch("/api/broadcast", {
                             method: "POST",
                             headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ recipients: [recipient], message: msg || '' }),
+                            body: JSON.stringify({ recipients: [recipient], message: msg || '', forceGraphAPI }),
                             signal,
                         });
                     }
@@ -785,25 +788,7 @@ export default function BroadcastTab() {
                 </div>
             </div>
 
-            {/* ═══ 24h WARNING BANNER ═══ */}
-            {windowStats.outside > 0 && windowStats.total > 0 && (
-                <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 flex items-start gap-3 shadow-sm">
-                    <AlertTriangle className="h-5 w-5 text-amber-500 flex-shrink-0 mt-0.5" />
-                    <div className="flex-1 text-sm">
-                        <p className="font-semibold text-amber-800">⚠️ Cảnh báo: {windowStats.outside}/{windowStats.total} khách ngoài 24h</p>
-                        <p className="text-amber-600 text-xs mt-1">
-                            Facebook chặn tin nhắn gửi cho khách không tương tác trong 24h gần nhất (lỗi #10). 
-                            Chỉ <span className="font-bold text-green-700">{windowStats.within}</span> khách trong 24h có thể nhận tin.
-                        </p>
-                        <button
-                            onClick={selectOnly24h}
-                            className="mt-2 px-3 py-1.5 text-xs font-semibold rounded-lg bg-green-600 text-white hover:bg-green-700 transition-colors shadow-sm"
-                        >
-                            ✅ Chỉ chọn {windowStats.within} khách trong 24h
-                        </button>
-                    </div>
-                </div>
-            )}
+
 
             {/* Customer List */}
             <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
@@ -1152,6 +1137,9 @@ export default function BroadcastTab() {
                                             {log.status === 'error' && '❌'}
                                         </span>
                                         <span className="truncate flex-1">{idx + 1}. {log.name}</span>
+                                        {sendResults && sendResults[idx]?.via === 'fb_graph_api' && (
+                                            <span className="flex-shrink-0 px-1.5 py-0.5 rounded text-[8px] font-bold bg-blue-100 text-blue-700 border border-blue-200">FB</span>
+                                        )}
                                         {log.error && <span className="text-red-400 text-[10px] truncate max-w-[250px]" title={log.error}>{log.error}</span>}
                                     </div>
                                 ))}
