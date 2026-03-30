@@ -182,6 +182,8 @@ export default function BroadcastTab() {
     const [editNote, setEditNote] = useState("");
     const [scheduleToast, setScheduleToast] = useState<string | null>(null);
     const sendingRef = useRef<Set<string>>(new Set());
+    const [showSchedulePreview, setShowSchedulePreview] = useState(false);
+    const [scheduledSegments, setScheduledSegments] = useState<Set<number>>(new Set());
     const [isGlobalPaused, setIsGlobalPaused] = useState(() => {
         if (typeof window === "undefined") return true;
         return localStorage.getItem("broadcast_global_paused") !== "false";
@@ -450,6 +452,68 @@ export default function BroadcastTab() {
         setSchedules(updated);
         setScheduleToast(`✅ Đã lưu lịch ${SCHEDULE_LABELS[hour]} cho ${pageName}`);
         setTimeout(() => setScheduleToast(null), 3000);
+    };
+
+    // ─── Hẹn tất cả đoạn theo mapping cố định ───────────────────────────────
+    // Đoạn 1 → 6h, Đoạn 2 → 11h, Đoạn 3 → 17h, Đoạn 4 → 21h
+    const SEGMENT_HOUR_MAP = [6, 11, 17, 21];
+
+    const handleScheduleAll = () => {
+        if (!selectedShopId || !selectedPageId) {
+            setScheduleToast("⚠️ Chọn Shop và Page trước!");
+            setTimeout(() => setScheduleToast(null), 3000);
+            return;
+        }
+        // Tìm đoạn nào đã có nội dung
+        const filledSegments = messages
+            .map((m, i) => ({ idx: i, msg: m.trim(), media: mediaArrays[i] }))
+            .filter(s => s.msg || s.media.length > 0);
+
+        if (filledSegments.length === 0) {
+            setScheduleToast("⚠️ Nhập ít nhất 1 đoạn tin nhắn trước!");
+            setTimeout(() => setScheduleToast(null), 3000);
+            return;
+        }
+
+        const pageName = pages.find(p => p.pageId === selectedPageId)?.name || selectedPageId;
+        const tz = shopTz.offset;
+        let updatedSchedules = [...schedules];
+
+        filledSegments.forEach(seg => {
+            const hour = SEGMENT_HOUR_MAP[seg.idx];
+            // ID duy nhất theo shop + page + giờ
+            const scheduleId = `${selectedShopId}_${selectedPageId}_h${hour}`;
+            const existing = updatedSchedules.find(s => s.id === scheduleId);
+            const entry: BroadcastSchedule = {
+                id: scheduleId,
+                shopId: selectedShopId,
+                shopName: shopName,
+                pageId: selectedPageId,
+                pageName,
+                hour,
+                messages: [seg.msg], // chỉ gửi đoạn tương ứng
+                filterPurchase,
+                filterTimeRange,
+                isActive: true,
+                createdAt: existing?.createdAt || new Date().toISOString(),
+                lastFiredAt: existing?.lastFiredAt || null,
+                nextFireAt: calcNextFireAt(hour, tz),
+                note: `Đoạn ${seg.idx + 1}`,
+            };
+            if (existing) {
+                updatedSchedules = updatedSchedules.map(s => s.id === scheduleId ? entry : s);
+            } else {
+                updatedSchedules = [...updatedSchedules, entry];
+            }
+        });
+
+        saveSchedules(updatedSchedules);
+        setSchedules(updatedSchedules);
+        // Đánh dấu các đoạn đã được accept
+        setScheduledSegments(new Set(filledSegments.map(s => s.idx)));
+        const hourList = filledSegments.map(s => `${SEGMENT_HOUR_MAP[s.idx]}h`).join(', ');
+        setScheduleToast(`✅ Đã hẹn ${filledSegments.length} lịch: ${hourList} cho ${pageName}`);
+        setTimeout(() => setScheduleToast(null), 4000);
     };
 
     const toggleScheduleActive = (id: string) => {
@@ -1045,6 +1109,7 @@ export default function BroadcastTab() {
                             </span>
                         </div>
                         <div className="grid grid-cols-5 gap-2">
+                            {/* ── Cột trái: 3 nút hành động ── */}
                             <div className="relative flex flex-col gap-1">
                                 <div className="relative">
                                     <button
@@ -1072,6 +1137,7 @@ export default function BroadcastTab() {
                                         </div>
                                     )}
                                 </div>
+
                                 <button
                                     onClick={() => {
                                         abortControllerRef.current?.abort();
@@ -1087,26 +1153,62 @@ export default function BroadcastTab() {
                                     ⛔ Huỷ bắn
                                 </button>
                             </div>
-                            {SCHEDULE_HOURS.map((hour) => {
-                                const isActive = scheduledHour === hour;
-                                return (
+                            {/* ── Cột phải: Accordion 4 khung giờ ── */}
+                            <div className="col-span-4 flex flex-col gap-2">
+                                {/* Toggle header – click để mở/đóng */}
+                                <button
+                                    onClick={() => setShowSchedulePreview(p => !p)}
+                                    className="w-full flex items-center justify-between px-3 py-2.5 rounded-lg border-2 border-amber-200 bg-white/90 hover:bg-amber-50 transition-colors"
+                                >
+                                    <span className="flex items-center gap-2 text-[11px] font-semibold text-amber-700">
+                                        <CalendarClock className="h-3.5 w-3.5" />
+                                        Lịch hẹn giờ
+                                        <span className="px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 text-[10px] font-bold">
+                                            {messages.filter(m => m?.trim()).length + mediaArrays.filter(a => a.length > 0).length} đoạn sẵn sàng
+                                        </span>
+                                    </span>
+                                    <ChevronDown className={`h-4 w-4 text-amber-500 transition-transform duration-200 ${showSchedulePreview ? 'rotate-180' : ''}`} />
+                                </button>
+                                {/* Collapsible: 4 ô giờ */}
+                                {showSchedulePreview && (
+                                    <>
+                                    <div className="grid grid-cols-4 gap-1.5">
+                                        {[0,1,2,3].map(i => {
+                                            const hour = SEGMENT_HOUR_MAP[i];
+                                            const hasFill = !!(messages[i]?.trim() || mediaArrays[i]?.length > 0);
+                                            const isScheduled = scheduledSegments.has(i);
+                                            return (
+                                                <div
+                                                    key={i}
+                                                    className={`rounded-lg border-2 px-2 py-2.5 text-center transition-all ${
+                                                        isScheduled && hasFill
+                                                            ? "border-green-400 bg-green-50 text-green-800 shadow-sm"
+                                                            : hasFill
+                                                            ? "border-amber-400 bg-amber-50 text-amber-800 shadow-sm"
+                                                            : "border-dashed border-slate-200 bg-white/60 text-slate-300"
+                                                    }`}
+                                                >
+                                                    <div className="text-base font-bold">{hour}:00</div>
+                                                    <div className="text-[9px] mt-0.5">{SCHEDULE_LABELS[hour]}</div>
+                                                    <div className={`text-[9px] font-semibold mt-1 ${
+                                                        isScheduled && hasFill ? "text-green-600" : hasFill ? "text-amber-600" : "text-slate-300"
+                                                    }`}>
+                                                        {isScheduled && hasFill ? `✅ Đã hẹn · Đoạn ${i+1}` : hasFill ? `● Đoạn ${i+1}` : `○ Đoạn ${i+1}`}
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
                                     <button
-                                        key={hour}
-                                        onClick={() => handleSchedule(hour)}
+                                        onClick={handleScheduleAll}
                                         disabled={selectedIds.size === 0 || messages.every(m => !m?.trim())}
-                                        className={`relative rounded-lg px-3 py-2.5 text-center transition-all border-2 disabled:opacity-40 disabled:cursor-not-allowed ${
-                                            isActive
-                                                ? "border-amber-500 bg-amber-500 text-white shadow-md shadow-amber-200"
-                                                : "border-amber-200 bg-white hover:border-amber-400 hover:bg-amber-50 text-slate-700"
-                                        }`}
+                                        className="w-full rounded-lg px-3 py-2.5 text-center transition-all border-2 border-amber-400 bg-gradient-to-r from-amber-500 to-orange-400 text-white shadow-md shadow-amber-200 hover:shadow-amber-300 font-bold text-sm disabled:opacity-40 disabled:cursor-not-allowed"
                                     >
-                                        <div className="text-lg font-bold">{hour}:00</div>
-                                        <div className={`text-[10px] ${isActive ? "text-amber-100" : "text-slate-400"}`}>
-                                            {SCHEDULE_LABELS[hour]}
-                                        </div>
+                                        ⏰ Hẹn lịch ({messages.filter(m => m?.trim()).length} đoạn)
                                     </button>
-                                );
-                            })}
+                                    </>
+                                )}
+                            </div>
                         </div>
                     </div>
 

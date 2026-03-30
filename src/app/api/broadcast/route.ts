@@ -180,16 +180,17 @@ async function fetchCRMConversations(
     pageId: string,
     _page: number
 ): Promise<object | null> {
-    const limit = 50;
+    const limit = 200; // ═══ INCREASED: fetch 200 per page instead of 50 ═══
     const allConversations: CRMConversation[] = [];
     const seenIds = new Set<string>(); // ═══ DEDUP: track IDs đã thấy ═══
     let currentPage = 1;
     let emptyStreak = 0;
-    const maxEmptyPages = 2;
-    const maxPages = 20;
+    const maxEmptyPages = 3; // ═══ INCREASED: cho phép 3 empty pages trước khi stop ═══
+    const maxPages = 50; // ═══ INCREASED: max 50 pages × 200 = 10,000 conversations ═══
     let crmApiError: string | null = null;
+    let consecutiveDupPages = 0; // Track consecutive all-duplicate pages
 
-    // Loop through pages, STOP when duplicates detected
+    // Loop through pages, STOP when truly no more data
     while (emptyStreak < maxEmptyPages && currentPage <= maxPages) {
         const url = `${apiUrl}/pages/${pageId}/conversations?access_token=${token}&limit=${limit}&page=${currentPage}`;
         
@@ -215,7 +216,7 @@ async function fetchCRMConversations(
                 continue;
             }
             
-            // ═══ DEDUP CHECK: nếu toàn bộ conversations trong page này đã thấy rồi → STOP ═══
+            // ═══ DEDUP CHECK ═══
             let newCount = 0;
             for (const c of conversations) {
                 const cId = String(c.id || '');
@@ -226,11 +227,22 @@ async function fetchCRMConversations(
                 }
             }
 
-            console.log(`[broadcast] CRM page ${currentPage}: ${conversations.length} returned, ${newCount} new, ${conversations.length - newCount} duplicates`);
+            console.log(`[broadcast] CRM page ${currentPage}: ${conversations.length} returned, ${newCount} new, ${conversations.length - newCount} dups | total=${allConversations.length}`);
 
             if (newCount === 0) {
-                // Toàn bộ page này là duplicates → CRM pagination đã hết data thật
-                console.log(`[broadcast] CRM page ${currentPage}: ALL DUPLICATES → stopping pagination`);
+                consecutiveDupPages++;
+                // ═══ RELAXED: cần 2 consecutive all-duplicate pages mới stop ═══
+                if (consecutiveDupPages >= 2) {
+                    console.log(`[broadcast] CRM: ${consecutiveDupPages} consecutive all-duplicate pages → stopping`);
+                    break;
+                }
+            } else {
+                consecutiveDupPages = 0; // Reset khi có data mới
+            }
+            
+            // Nếu API trả ít hơn limit → đã hết data
+            if (conversations.length < limit) {
+                console.log(`[broadcast] CRM page ${currentPage}: returned ${conversations.length} < limit ${limit} → last page`);
                 break;
             }
             
