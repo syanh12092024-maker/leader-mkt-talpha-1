@@ -852,11 +852,37 @@ export async function POST(req: NextRequest) {
                     if (!sendData.success) {
                         // ═══ FB GRAPH API FALLBACK: Try HUMAN_AGENT tag (7 days window) ═══
                         const errMsg = String(sendData.original_error || sendData.message || sendData.error || '');
-                        // Detect mọi biến thể lỗi ngoài 24h: error code #10, OOW, Outside, tiếng Việt
-                        const isOutside24h = 
+                        const errCode = sendData.error_code || sendData.code || '';
+                        
+                        // ═══ EXPANDED: Detect ALL messaging errors that should trigger FB fallback ═══
+                        // #10  = outside 24h window (OOW)
+                        // #551 = "Người này hiện không có mặt" / user not available  
+                        // #100 = invalid parameter / no matching user
+                        // #200 = permission error
+                        // #2018001 = message delivery failed
+                        // Generic: Cannot send, blocked, unavailable
+                        const shouldFallbackToFB = 
+                            // Error #10: outside 24h window
                             errMsg.includes('(#10)') ||
                             errMsg.includes('error_code=10') ||
                             /\berror[^\w]*10\b/i.test(errMsg) ||
+                            errCode === 10 || errCode === '10' ||
+                            // Error #551: user not available / không có mặt
+                            errMsg.includes('(#551)') ||
+                            errCode === 551 || errCode === '551' ||
+                            errMsg.toLowerCase().includes('không có mặt') ||
+                            errMsg.toLowerCase().includes('not available') ||
+                            errMsg.toLowerCase().includes('unavailable') ||
+                            // Error #100: invalid parameter 
+                            errMsg.includes('(#100)') ||
+                            errCode === 100 || errCode === '100' ||
+                            // Error #200: permission
+                            errMsg.includes('(#200)') ||
+                            errCode === 200 || errCode === '200' ||
+                            // Error #2018001: delivery failed
+                            errMsg.includes('(#2018001)') ||
+                            errCode === 2018001 || errCode === '2018001' ||
+                            // Generic patterns
                             errMsg.toLowerCase().includes('outside') ||
                             errMsg.toLowerCase().includes('ngoài khoảng') ||
                             errMsg.toLowerCase().includes('ngoai khoang') ||
@@ -864,36 +890,52 @@ export async function POST(req: NextRequest) {
                             errMsg.includes('OOW') ||
                             errMsg.toLowerCase().includes('24-hour') ||
                             errMsg.toLowerCase().includes('24h') ||
-                            sendData.error_code === 10 ||
-                            sendData.error_code === '10';
+                            errMsg.toLowerCase().includes('blocked') ||
+                            errMsg.toLowerCase().includes('bị chặn');
                         
-                        if (isOutside24h) {
+                        // ═══ ALWAYS try FB fallback when Pancake fails ═══
+                        // Nếu không match pattern cụ thể → vẫn thử FB nếu có token
+                        const hasFbFallback = !!fbPageToken;
+                        
+                        if (shouldFallbackToFB || hasFbFallback) {
+                            // Validate PSID: phải là số thuần, không phải Pancake internal ID
+                            const psidToUse = recipient.psid;
+                            const isValidPSID = /^\d+$/.test(psidToUse) && psidToUse.length >= 10;
+                            
+                            if (!isValidPSID) {
+                                console.warn(`[fb-fallback] ⚠️ INVALID PSID: "${psidToUse}" for ${recipient.name} — looks like Pancake internal ID, not Facebook PSID`);
+                                textSuccess = false;
+                                results.push({ psid: recipient.psid, name: recipient.name, success: false, error: `Pancake: ${errMsg} → PSID không hợp lệ (${psidToUse}) — không phải Facebook PSID`, via: 'pancake' });
+                                await new Promise((resolve) => setTimeout(resolve, 500));
+                                continue;
+                            }
+                            
                             // Chỉ dùng TalphaBot token — Pancake token không dùng được với Graph API (#190)
                             const tokensToTry: Array<{ token: string; label: string }> = [];
                             if (fbPageToken) tokensToTry.push({ token: fbPageToken, label: 'TalphaBot' });
-                            // NOTE: Pancake token bị loại — luôn trả #190 Bad signature với graph.facebook.com
 
-                            console.log(`[fb-fallback] ${recipient.name} | PSID=${recipient.psid} | pageId=${pageId} | tokens=${tokensToTry.map(t=>t.label).join(',')||'NONE (cần switch TalphaBot app sang Live mode)'}`);
+                            const fallbackReason = shouldFallbackToFB ? 'matched error pattern' : 'generic Pancake failure';
+                            console.log(`[fb-fallback] ${recipient.name} | PSID=${psidToUse} | pageId=${pageId} | reason=${fallbackReason} | pancakeErr=${errMsg.slice(0, 80)} | tokens=${tokensToTry.map(t=>t.label).join(',')||'NONE'}`);
 
                             let fbSuccess = false;
                             let fbError = '';
                             for (const { token: tryToken, label } of tokensToTry) {
-                                console.log(`[fb-fallback] Trying ${label} token for ${recipient.name}`);
-                                const fbResult = await sendViaFacebookGraphAPI(recipient.psid, message.trim(), tryToken);
+                                console.log(`[fb-fallback] Trying ${label} token for ${recipient.name} (PSID=${psidToUse})`);
+                                const fbResult = await sendViaFacebookGraphAPI(psidToUse, message.trim(), tryToken);
                                 if (fbResult.success) {
                                     fbSuccess = true;
                                     textSuccess = true;
                                     sentVia = 'fb_graph_api';
-                                    console.log(`[fb-fallback] ✅ SUCCESS via ${label} token for ${recipient.name}`);
+                                    console.log(`[fb-fallback] ✅ SUCCESS via ${label} for ${recipient.name} (tag=${fbResult.tagUsed})`);
                                     break;
                                 }
                                 fbError = `${label}: ${fbResult.error || ''}`;
-                                console.warn(`[fb-fallback] ${label} token failed: ${fbResult.error}`);
+                                console.warn(`[fb-fallback] ${label} failed for ${recipient.name}: ${fbResult.error}`);
                             }
 
                             if (!fbSuccess) {
                                 textSuccess = false;
-                                results.push({ psid: recipient.psid, name: recipient.name, success: false, error: `Pancake: ${errMsg} → FB: ${fbError || 'Tất cả tokens thất bại'}`, via: 'fb_graph_api' });
+                                results.push({ psid: recipient.psid, name: recipient.name, success: false, error: `Pancake: ${errMsg.slice(0, 60)} → FB: ${fbError || 'Không có token'}`, via: 'fb_graph_api' });
                                 await new Promise((resolve) => setTimeout(resolve, 500));
                                 continue;
                             }
