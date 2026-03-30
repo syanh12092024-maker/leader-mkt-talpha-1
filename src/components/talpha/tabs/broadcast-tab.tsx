@@ -205,8 +205,8 @@ export default function BroadcastTab() {
     const [showSchedulePreview, setShowSchedulePreview] = useState(false);
     const [scheduledSegments, setScheduledSegments] = useState<Set<number>>(new Set());
     const [isGlobalPaused, setIsGlobalPaused] = useState(() => {
-        if (typeof window === "undefined") return true;
-        return localStorage.getItem("broadcast_global_paused") !== "false";
+        if (typeof window === "undefined") return false;
+        return localStorage.getItem("broadcast_global_paused") === "true";
     });
 
     const toggleGlobalPause = () => {
@@ -581,8 +581,8 @@ export default function BroadcastTab() {
                         seg.error = undefined;
                         seg.sentAt = undefined;
                     }
-                    // Đã đến giờ? (trong khoảng hour ~ hour+0.5)
-                    if (currentDecimal >= seg.hour && currentDecimal < seg.hour + 0.5 && seg.status !== 'sent') {
+                    // Đã đến giờ? → fire bất kỳ segment nào đã qua giờ mà chưa sent hôm nay
+                    if (currentDecimal >= seg.hour && seg.status !== 'sent') {
                         autoFireRef.current = true;
                         seg.status = 'sending';
                         schedule.lastRunDate = todayStr;
