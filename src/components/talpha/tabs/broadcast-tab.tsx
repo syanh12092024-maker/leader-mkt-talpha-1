@@ -593,7 +593,25 @@ export default function BroadcastTab() {
                             // Lấy customers cho shop+page này
                             const custRes = await fetch(`/api/broadcast?shopId=${schedule.shopId}&pageFilter=${schedule.pageId}`);
                             const custData = await custRes.json();
-                            const recipients = (custData.customers || []).map((c: Customer) => ({
+                            let allCust: Customer[] = custData.customers || [];
+
+                            // ═══ ÁP DỤNG FILTER TỪ LỊCH — loại khách đã mua ═══
+                            if (schedule.filterPurchase === 'no_purchase') {
+                                // Thẻ liên quan đến đã mua/đã gửi hàng
+                                const PURCHASE_TAGS = ['đã gửi', 'đã nhận', 'da gui', 'da nhan', 'mua hàng', 'mua hang', 'đã mua', 'da mua', 'shipped', 'delivered'];
+                                allCust = allCust.filter(c => {
+                                    // Có SĐT hoặc orderCount > 0 → đã mua → loại
+                                    if (c.customerPhone || c.orderCount > 0) return false;
+                                    // Có tag đã gửi/đã nhận → đã mua → loại
+                                    const tagStr = (c.tags || []).map(t => String(t).toLowerCase()).join(' ');
+                                    if (PURCHASE_TAGS.some(pt => tagStr.includes(pt))) return false;
+                                    return true;
+                                });
+                            } else if (schedule.filterPurchase === 'has_purchase') {
+                                allCust = allCust.filter(c => c.customerPhone || c.orderCount > 0);
+                            }
+
+                            const recipients = allCust.map((c: Customer) => ({
                                 psid: c.psid,
                                 pageFbId: c.pageFbId,
                                 name: c.customerName,
