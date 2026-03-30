@@ -99,10 +99,15 @@ interface SendResult {
 }
 
 // ─── Schedule types + localStorage ───────────────────────────────────────────
+type SegmentStatus = 'pending' | 'sending' | 'sent' | 'error';
+
 interface ScheduleSegment {
     segIdx: number;   // 0-3
     hour: number;     // 6, 11, 17, 21
     message: string;
+    status?: SegmentStatus;
+    error?: string;
+    sentAt?: string;
 }
 
 interface BroadcastSchedule {
@@ -111,9 +116,9 @@ interface BroadcastSchedule {
     shopName: string;
     pageId: string;
     pageName: string;
-    hour: number;       // giờ đầu tiên (backward compat)
+    hour: number;
     messages: string[];
-    segments?: ScheduleSegment[];  // NEW: tất cả khung giờ trong 1 lịch
+    segments?: ScheduleSegment[];
     filterPurchase: string;
     filterTimeRange: string;
     isActive: boolean;
@@ -122,6 +127,7 @@ interface BroadcastSchedule {
     nextFireAt: string | null;
     note?: string;
     lastSegmentIndex?: number;
+    lastRunDate?: string; // ISO date "2026-03-30" — chỉ chạy 1 lần/ngày/segment
 }
 
 const SCHEDULE_KEY = "broadcast_schedules_v2";
@@ -138,6 +144,13 @@ function saveSchedules(list: BroadcastSchedule[]) {
 
 function calcNextFireAt(hour: number, utcOffset: number): string {
     return getNextScheduleTime(hour, utcOffset).toISOString();
+}
+
+// Lấy ngày hiện tại theo timezone shop
+function getTodayDateStr(utcOffset: number): string {
+    const now = new Date();
+    const target = new Date(now.getTime() + utcOffset * 3600000 + now.getTimezoneOffset() * 60000);
+    return target.toISOString().slice(0, 10);
 }
 
 // ─── Main Component ───────────────────────────────────────────────────────────
@@ -540,6 +553,115 @@ export default function BroadcastTab() {
         saveSchedules(updated);
         setSchedules(updated);
     };
+
+    // ═══ AUTO-FIRE: kiểm tra mỗi 60s, đến giờ → tự bắn ═══
+    const autoFireRef = useRef(false); // Tránh race condition
+    useEffect(() => {
+        const interval = setInterval(async () => {
+            if (autoFireRef.current) return; // Đang auto-fire rồi
+            if (isGlobalPaused) return;
+            const currentSchedules = loadSchedules();
+            if (currentSchedules.length === 0) return;
+
+            for (const schedule of currentSchedules) {
+                if (!schedule.isActive || !schedule.segments?.length) continue;
+                const tz = SHOP_TIMEZONES[schedule.shopName]?.offset ?? 3;
+                const todayStr = getTodayDateStr(tz);
+                const now = new Date();
+                const targetNow = new Date(now.getTime() + tz * 3600000 + now.getTimezoneOffset() * 60000);
+                const currentDecimal = targetNow.getHours() + targetNow.getMinutes() / 60;
+
+                for (const seg of schedule.segments) {
+                    // Đã chạy hôm nay rồi?
+                    if (seg.status === 'sent' && schedule.lastRunDate === todayStr) continue;
+                    if (seg.status === 'sending') continue;
+                    // Reset status nếu sang ngày mới
+                    if (schedule.lastRunDate && schedule.lastRunDate !== todayStr) {
+                        seg.status = 'pending';
+                        seg.error = undefined;
+                        seg.sentAt = undefined;
+                    }
+                    // Đã đến giờ? (trong khoảng hour ~ hour+0.5)
+                    if (currentDecimal >= seg.hour && currentDecimal < seg.hour + 0.5 && seg.status !== 'sent') {
+                        autoFireRef.current = true;
+                        seg.status = 'sending';
+                        schedule.lastRunDate = todayStr;
+                        saveSchedules(currentSchedules);
+                        setSchedules([...currentSchedules]);
+
+                        try {
+                            // Lấy customers cho shop+page này
+                            const custRes = await fetch(`/api/broadcast?shopId=${schedule.shopId}&pageFilter=${schedule.pageId}`);
+                            const custData = await custRes.json();
+                            const recipients = (custData.customers || []).map((c: Customer) => ({
+                                psid: c.psid,
+                                pageFbId: c.pageFbId,
+                                name: c.customerName,
+                                conversationId: c.id,
+                            }));
+
+                            if (recipients.length === 0) {
+                                seg.status = 'error';
+                                seg.error = 'Không có khách hàng';
+                            } else {
+                                // Gửi tin nhắn
+                                let successCount = 0;
+                                let errorCount = 0;
+                                // Gửi từng batch 1 người
+                                for (let i = 0; i < recipients.length; i++) {
+                                    try {
+                                        const res = await fetch('/api/broadcast', {
+                                            method: 'POST',
+                                            headers: { 'Content-Type': 'application/json' },
+                                            body: JSON.stringify({
+                                                recipients: [recipients[i]],
+                                                message: seg.message,
+                                                forceGraphAPI: true,
+                                            }),
+                                        });
+                                        const data = await res.json();
+                                        if (data.results?.[0]?.success) successCount++;
+                                        else errorCount++;
+                                    } catch {
+                                        errorCount++;
+                                    }
+                                    // Delay giữa recipients
+                                    if (i < recipients.length - 1) await new Promise(r => setTimeout(r, 300));
+                                }
+
+                                if (errorCount === 0) {
+                                    seg.status = 'sent';
+                                    seg.sentAt = new Date().toISOString();
+                                } else if (successCount > 0) {
+                                    seg.status = 'sent';
+                                    seg.sentAt = new Date().toISOString();
+                                    seg.error = `${errorCount} lỗi / ${recipients.length} tổng`;
+                                } else {
+                                    seg.status = 'error';
+                                    seg.error = `Tất cả ${errorCount} gửi thất bại`;
+                                }
+                            }
+
+                            schedule.lastFiredAt = new Date().toISOString();
+                            schedule.nextFireAt = calcNextFireAt(seg.hour, tz);
+                        } catch (err) {
+                            seg.status = 'error';
+                            seg.error = err instanceof Error ? err.message : 'Unknown error';
+                        }
+
+                        saveSchedules(currentSchedules);
+                        setSchedules([...currentSchedules]);
+                        autoFireRef.current = false;
+                        // Chỉ fire 1 segment mỗi lần interval
+                        break;
+                    }
+                }
+            }
+        }, 60_000); // Kiểm tra mỗi 60 giây
+
+        return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [isGlobalPaused]);
 
     const startEditNote = (s: BroadcastSchedule) => {
         setEditingScheduleId(s.id);
@@ -1386,46 +1508,49 @@ export default function BroadcastTab() {
 
                                 {/* ─── Segment Status: hiển thị 4 ô giờ ─── */}
                                 {s.isActive && (() => {
-                                    const tzOffset = SHOP_TIMEZONES[s.shopName]?.offset ?? 3;
-                                    const now = new Date();
-                                    const targetNow = new Date(now.getTime() + tzOffset * 3600000 + now.getTimezoneOffset() * 60000);
-                                    const currentDecimal = targetNow.getHours() + targetNow.getMinutes() / 60;
-                                    
                                     const allSlots = [
                                         { idx: 0, hour: 6, icon: "🌅", time: "6h" },
                                         { idx: 1, hour: 11, icon: "☀️", time: "11h" },
                                         { idx: 2, hour: 17, icon: "🌆", time: "17h" },
                                         { idx: 3, hour: 21, icon: "🌙", time: "21h" },
                                     ];
-                                    const scheduledHours = new Set(segs.map(seg => seg.hour));
-                                    const completedCount = allSlots.filter(slot => scheduledHours.has(slot.hour) && currentDecimal >= slot.hour + 0.5).length;
+                                    // Map segment status by hour
+                                    const segStatusMap = new Map<number, ScheduleSegment>();
+                                    for (const seg of segs) segStatusMap.set(seg.hour, seg);
+                                    const sentCount = segs.filter(seg => seg.status === 'sent').length;
+                                    const errorCount = segs.filter(seg => seg.status === 'error').length;
                                     
                                     return (
                                         <div className="space-y-1.5 pt-1">
                                             <div className="flex items-center gap-1">
                                                 {allSlots.map((slot) => {
-                                                    const isScheduled = scheduledHours.has(slot.hour);
-                                                    const isDone = isScheduled && currentDecimal >= slot.hour + 0.5;
-                                                    const isActive = isScheduled && !isDone && currentDecimal >= slot.hour - 0.5 && currentDecimal < slot.hour + 0.5;
+                                                    const seg = segStatusMap.get(slot.hour);
+                                                    const isScheduled = !!seg;
+                                                    const status = seg?.status || 'pending';
                                                     
                                                     return (
                                                         <div
                                                             key={slot.idx}
+                                                            title={seg?.error || ''}
                                                             className={`flex-1 flex items-center justify-center gap-0.5 py-1 rounded-lg text-[10px] font-semibold transition-all ${
-                                                                isDone
+                                                                !isScheduled
+                                                                    ? "bg-slate-50 text-slate-300 border border-slate-100"
+                                                                    : status === 'sent'
                                                                     ? "bg-green-100 text-green-700 border border-green-200"
-                                                                    : isActive
+                                                                    : status === 'error'
+                                                                    ? "bg-red-100 text-red-700 border border-red-200"
+                                                                    : status === 'sending'
                                                                     ? "bg-amber-100 text-amber-700 border border-amber-300 animate-pulse"
-                                                                    : isScheduled
-                                                                    ? "bg-violet-50 text-violet-600 border border-violet-200"
-                                                                    : "bg-slate-50 text-slate-300 border border-slate-100"
+                                                                    : "bg-yellow-50 text-yellow-700 border border-yellow-200"
                                                             }`}
                                                         >
                                                             <span>{slot.icon}</span>
                                                             <span>{slot.time}</span>
-                                                            {isDone && <span>✓</span>}
-                                                            {isActive && <span>⚡</span>}
                                                             {!isScheduled && <span>—</span>}
+                                                            {isScheduled && status === 'sent' && <span>✓</span>}
+                                                            {isScheduled && status === 'error' && <span>✗</span>}
+                                                            {isScheduled && status === 'sending' && <span>⚡</span>}
+                                                            {isScheduled && status === 'pending' && <span>⏳</span>}
                                                         </div>
                                                     );
                                                 })}
@@ -1433,12 +1558,17 @@ export default function BroadcastTab() {
                                             <div className="flex items-center gap-1.5">
                                                 <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
                                                     <div
-                                                        className="h-full rounded-full transition-all duration-500 bg-gradient-to-r from-green-400 to-emerald-500"
-                                                        style={{ width: `${Math.min(100, (completedCount / segs.length) * 100)}%` }}
+                                                        className={`h-full rounded-full transition-all duration-500 ${
+                                                            errorCount > 0 && sentCount === 0
+                                                                ? 'bg-gradient-to-r from-red-400 to-red-500'
+                                                                : 'bg-gradient-to-r from-green-400 to-emerald-500'
+                                                        }`}
+                                                        style={{ width: `${Math.min(100, (sentCount / segs.length) * 100)}%` }}
                                                     />
                                                 </div>
                                                 <span className="text-[9px] text-slate-400 font-medium whitespace-nowrap">
-                                                    {completedCount}/{segs.length} đoạn
+                                                    {sentCount}/{segs.length} đoạn
+                                                    {errorCount > 0 && <span className="text-red-400"> · {errorCount} lỗi</span>}
                                                 </span>
                                             </div>
                                         </div>
