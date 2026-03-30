@@ -255,12 +255,16 @@ export default function BroadcastTab() {
         }
     }, []);
 
+    // CRM warning state
+    const [crmWarning, setCrmWarning] = useState<string | null>(null);
+
     // Load customers (with optional page filter)
     const loadCustomers = useCallback(async (shopId: string, page = 1, pageFilter = "") => {
         if (!shopId) return;
         setIsLoadingCustomers(true);
         setSelectedIds(new Set());
         setSendResults(null);
+        setCrmWarning(null);
 
         try {
             let url = `/api/broadcast?shopId=${shopId}&page=${page}`;
@@ -274,6 +278,10 @@ export default function BroadcastTab() {
                 setTotalCustomers(data.total || data.customers.length);
                 setTotalPages(data.totalPages || 1);
                 setCurrentPage(data.page || page);
+                // Show CRM warning if present
+                if (data.crmWarning) {
+                    setCrmWarning(data.crmWarning);
+                }
             } else if (data.error) {
                 console.error("Load customers error:", data.error);
                 setCustomers([]);
@@ -789,6 +797,23 @@ export default function BroadcastTab() {
             </div>
 
 
+
+            {/* CRM Warning Banner */}
+            {crmWarning && (
+                <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 flex items-start gap-3">
+                    <AlertTriangle className="h-5 w-5 text-amber-600 flex-shrink-0 mt-0.5" />
+                    <div className="flex-1">
+                        <p className="text-sm font-semibold text-amber-800">CRM không khả dụng cho page này</p>
+                        <p className="text-xs text-amber-700 mt-1">{crmWarning}</p>
+                        <p className="text-xs text-amber-600 mt-1">
+                            👉 Vào <a href="https://pages.fm" target="_blank" rel="noopener noreferrer" className="underline font-medium hover:text-amber-800">pages.fm</a> → Đăng nhập lại Facebook → Quay lại đây và bấm 🔍 Lọc data
+                        </p>
+                    </div>
+                    <button onClick={() => setCrmWarning(null)} className="text-amber-500 hover:text-amber-700">
+                        <X className="h-4 w-4" />
+                    </button>
+                </div>
+            )}
 
             {/* Customer List */}
             <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">

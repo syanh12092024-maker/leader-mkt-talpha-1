@@ -137,6 +137,7 @@ export async function GET(req: NextRequest) {
         }
 
         // ─── Primary: CRM Conversations (ALL who messaged) ────────────────
+        let crmError: string | null = null;
         if (pageFilter && config.pancake_crm?.api_token) {
             try {
                 const crmData = await fetchCRMConversations(
@@ -146,13 +147,25 @@ export async function GET(req: NextRequest) {
                     Number(page)
                 );
                 if (crmData) return NextResponse.json(crmData);
+                // CRM returned null = error occurred
+                crmError = `CRM không trả data cho page ${pageFilter}. Có thể cần đăng nhập lại Pancake.`;
             } catch (err) {
                 console.error("[broadcast] CRM fallback to POS:", err);
+                crmError = `CRM lỗi: ${err instanceof Error ? err.message : String(err)}`;
             }
         }
 
         // ─── Fallback: POS Customers (only buyers) ────────────────────────
-        return await fetchPOSCustomers(config, shop, page, pageFilter);
+        const posResponse = await fetchPOSCustomers(config, shop, page, pageFilter);
+        // Inject CRM warning into POS response so frontend can display it
+        if (crmError) {
+            const posData = await posResponse.json();
+            return NextResponse.json({
+                ...posData,
+                crmWarning: `⚠️ ${crmError} — Chỉ hiển thị khách ĐÃ MUA từ POS. Để lấy TẤT CẢ khách nhắn tin, đăng nhập lại Pancake CRM.`,
+            });
+        }
+        return posResponse;
     } catch (error: unknown) {
         console.error("[broadcast] GET Error:", error);
         const message = error instanceof Error ? error.message : "Unknown error";
@@ -174,6 +187,7 @@ async function fetchCRMConversations(
     let emptyStreak = 0;
     const maxEmptyPages = 2;
     const maxPages = 20;
+    let crmApiError: string | null = null;
 
     // Loop through pages, STOP when duplicates detected
     while (emptyStreak < maxEmptyPages && currentPage <= maxPages) {
@@ -184,7 +198,11 @@ async function fetchCRMConversations(
             const data = await res.json();
 
             if (data.error_code) {
-                console.error(`[broadcast] CRM Error ${data.error_code}: ${data.message}`);
+                crmApiError = `[${data.error_code}] ${data.message || 'Unknown CRM error'}`;
+                console.error(`[broadcast] CRM Error ${data.error_code}: ${data.message} | pageId=${pageId}`);
+                if (data.platform_specific_error) {
+                    console.error(`[broadcast] CRM Platform error: code=${data.platform_specific_error.code} subcode=${data.platform_specific_error.subcode} msg=${data.platform_specific_error.message}`);
+                }
                 if (allConversations.length === 0) return null;
                 break;
             }
