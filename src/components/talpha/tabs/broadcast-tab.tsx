@@ -99,14 +99,21 @@ interface SendResult {
 }
 
 // ─── Schedule types + localStorage ───────────────────────────────────────────
+interface ScheduleSegment {
+    segIdx: number;   // 0-3
+    hour: number;     // 6, 11, 17, 21
+    message: string;
+}
+
 interface BroadcastSchedule {
     id: string;
     shopId: string;
     shopName: string;
     pageId: string;
     pageName: string;
-    hour: number;
+    hour: number;       // giờ đầu tiên (backward compat)
     messages: string[];
+    segments?: ScheduleSegment[];  // NEW: tất cả khung giờ trong 1 lịch
     filterPurchase: string;
     filterTimeRange: string;
     isActive: boolean;
@@ -114,7 +121,7 @@ interface BroadcastSchedule {
     lastFiredAt: string | null;
     nextFireAt: string | null;
     note?: string;
-    lastSegmentIndex?: number; // Track which segment was last sent (0-3)
+    lastSegmentIndex?: number;
 }
 
 const SCHEDULE_KEY = "broadcast_schedules_v2";
@@ -477,42 +484,44 @@ export default function BroadcastTab() {
 
         const pageName = pages.find(p => p.pageId === selectedPageId)?.name || selectedPageId;
         const tz = shopTz.offset;
-        let updatedSchedules = [...schedules];
 
-        filledSegments.forEach(seg => {
-            const hour = SEGMENT_HOUR_MAP[seg.idx];
-            // ID duy nhất theo shop + page + giờ
-            const scheduleId = `${selectedShopId}_${selectedPageId}_h${hour}`;
-            const existing = updatedSchedules.find(s => s.id === scheduleId);
-            const entry: BroadcastSchedule = {
-                id: scheduleId,
-                shopId: selectedShopId,
-                shopName: shopName,
-                pageId: selectedPageId,
-                pageName,
-                hour,
-                messages: [seg.msg], // chỉ gửi đoạn tương ứng
-                filterPurchase,
-                filterTimeRange,
-                isActive: true,
-                createdAt: existing?.createdAt || new Date().toISOString(),
-                lastFiredAt: existing?.lastFiredAt || null,
-                nextFireAt: calcNextFireAt(hour, tz),
-                note: `Đoạn ${seg.idx + 1}`,
-            };
-            if (existing) {
-                updatedSchedules = updatedSchedules.map(s => s.id === scheduleId ? entry : s);
-            } else {
-                updatedSchedules = [...updatedSchedules, entry];
-            }
-        });
+        // ═══ TẠO 1 ENTRY DUY NHẤT chứa tất cả segments ═══
+        const scheduleId = `${selectedShopId}_${selectedPageId}_combined`;
+        const existing = schedules.find(s => s.id === scheduleId);
+        const segs: ScheduleSegment[] = filledSegments.map(seg => ({
+            segIdx: seg.idx,
+            hour: SEGMENT_HOUR_MAP[seg.idx],
+            message: seg.msg,
+        }));
+        const firstHour = segs[0].hour;
+
+        const entry: BroadcastSchedule = {
+            id: scheduleId,
+            shopId: selectedShopId,
+            shopName: shopName,
+            pageId: selectedPageId,
+            pageName,
+            hour: firstHour,
+            messages: segs.map(s => s.message),
+            segments: segs,
+            filterPurchase,
+            filterTimeRange,
+            isActive: true,
+            createdAt: existing?.createdAt || new Date().toISOString(),
+            lastFiredAt: existing?.lastFiredAt || null,
+            nextFireAt: calcNextFireAt(firstHour, tz),
+            note: existing?.note,
+        };
+
+        const updatedSchedules = existing
+            ? schedules.map(s => s.id === scheduleId ? entry : s)
+            : [...schedules, entry];
 
         saveSchedules(updatedSchedules);
         setSchedules(updatedSchedules);
-        // Đánh dấu các đoạn đã được accept
         setScheduledSegments(new Set(filledSegments.map(s => s.idx)));
-        const hourList = filledSegments.map(s => `${SEGMENT_HOUR_MAP[s.idx]}h`).join(', ');
-        setScheduleToast(`✅ Đã hẹn ${filledSegments.length} lịch: ${hourList} cho ${pageName}`);
+        const hourList = segs.map(s => `${s.hour}h`).join(', ');
+        setScheduleToast(`✅ Đã hẹn 1 lịch (${hourList}) cho ${pageName}`);
         setTimeout(() => setScheduleToast(null), 4000);
     };
 
@@ -1315,18 +1324,18 @@ export default function BroadcastTab() {
                         const tz = SHOP_TIMEZONES[s.shopName];
                         const nextMs = s.nextFireAt ? new Date(s.nextFireAt).getTime() - Date.now() : null;
                         const isEditing = editingScheduleId === s.id;
+                        // Lấy danh sách segments (backward compat: nếu chưa có thì tạo từ hour/messages)
+                        const segs: ScheduleSegment[] = s.segments || [{ segIdx: 0, hour: s.hour, message: s.messages[0] || '' }];
+                        const segHours = segs.map(seg => `${seg.hour}h`).join(', ');
                         return (
                             <div key={s.id} className={`rounded-xl border p-3 space-y-2 transition-colors ${
                                 s.isActive ? "border-violet-200 bg-violet-50/40" : "border-slate-200 bg-slate-50/60"
                             }`}>
                                 {/* Row 1: Actions (left) + Info (right) */}
                                 <div className="flex items-start gap-3">
-                                    {/* Action buttons - đầu hàng */}
                                     <div className="flex flex-col gap-1 flex-shrink-0 pt-0.5">
-                                        {/* Pause / Resume */}
                                         <button
                                             onClick={() => toggleScheduleActive(s.id)}
-                                            title={s.isActive ? "Tạm dừng" : "Tiếp tục"}
                                             className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-semibold transition-colors ${
                                                 s.isActive
                                                     ? "bg-yellow-100 text-yellow-700 hover:bg-yellow-200"
@@ -1335,25 +1344,13 @@ export default function BroadcastTab() {
                                         >
                                             {s.isActive ? <><Timer className="h-3 w-3" /> Dừng</> : <><Clock className="h-3 w-3" /> Chạy</>}
                                         </button>
-                                        {/* Edit note */}
-                                        <button
-                                            onClick={() => startEditNote(s)}
-                                            title="Ghi chú"
-                                            className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-semibold bg-blue-50 text-blue-500 hover:bg-blue-100 transition-colors"
-                                        >
+                                        <button onClick={() => startEditNote(s)} className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-semibold bg-blue-50 text-blue-500 hover:bg-blue-100 transition-colors">
                                             <MessageSquare className="h-3 w-3" /> Ghi chú
                                         </button>
-                                        {/* Delete */}
-                                        <button
-                                            onClick={() => deleteSchedule(s.id)}
-                                            title="Xoá"
-                                            className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-semibold bg-red-50 text-red-400 hover:bg-red-100 transition-colors"
-                                        >
+                                        <button onClick={() => deleteSchedule(s.id)} className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-semibold bg-red-50 text-red-400 hover:bg-red-100 transition-colors">
                                             <X className="h-3 w-3" /> Xoá
                                         </button>
                                     </div>
-
-                                    {/* Info */}
                                     <div className="flex-1 min-w-0">
                                         <div className="flex items-center gap-1.5 flex-wrap">
                                             <span className="text-[11px] font-bold text-slate-700">{s.shopName}</span>
@@ -1367,107 +1364,94 @@ export default function BroadcastTab() {
                                         </div>
                                         <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                                             <span className="text-[11px] text-violet-600 font-semibold">
-                                                {SCHEDULE_LABELS[s.hour]} · {s.hour}:00 {tz ? `(${tz.flag} ${tz.label})` : ""}
+                                                📅 {segHours} {tz ? `(${tz.flag} ${tz.label})` : ""}
                                             </span>
                                             {s.nextFireAt && nextMs !== null && nextMs > 0 && (
-                                                <span className="text-[10px] text-slate-400">
-                                                    ⏳ còn {formatCountdown(nextMs)}
-                                                </span>
-                                            )}
-                                            {s.lastFiredAt && (
-                                                <span className="text-[10px] text-slate-400">
-                                                    · Gửi lần cuối: {new Date(s.lastFiredAt).toLocaleString("vi-VN", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
-                                                </span>
+                                                <span className="text-[10px] text-slate-400">⏳ còn {formatCountdown(nextMs)}</span>
                                             )}
                                         </div>
-                                        {s.messages.filter(Boolean).length > 0 && (
-                                            <p className="text-[10px] text-slate-400 truncate mt-0.5">
-                                                💬 {s.messages.filter(Boolean).join(" · ").slice(0, 80)}{s.messages.join("").length > 80 ? "…" : ""}
-                                            </p>
+                                        {/* Hiển thị preview nội dung từng đoạn */}
+                                        {segs.length > 0 && (
+                                            <div className="mt-1 space-y-0.5">
+                                                {segs.map(seg => (
+                                                    <p key={seg.segIdx} className="text-[10px] text-slate-400 truncate">
+                                                        <span className="text-slate-500 font-medium">Đ{seg.segIdx + 1} ({seg.hour}h):</span>{' '}
+                                                        {seg.message ? seg.message.slice(0, 60) + (seg.message.length > 60 ? '…' : '') : '(trống)'}
+                                                    </p>
+                                                ))}
+                                            </div>
                                         )}
                                     </div>
                                 </div>
 
-                                {/* ─── Segment Status: 4 đoạn bắn ─── */}
+                                {/* ─── Segment Status: hiển thị 4 ô giờ ─── */}
                                 {s.isActive && (() => {
                                     const tzOffset = SHOP_TIMEZONES[s.shopName]?.offset ?? 3;
                                     const now = new Date();
                                     const targetNow = new Date(now.getTime() + tzOffset * 3600000 + now.getTimezoneOffset() * 60000);
-                                    const currentHour = targetNow.getHours();
-                                    const currentMin = targetNow.getMinutes();
-                                    const currentDecimal = currentHour + currentMin / 60;
+                                    const currentDecimal = targetNow.getHours() + targetNow.getMinutes() / 60;
                                     
-                                    const segments = [
-                                        { idx: 0, hour: 6, label: "Đoạn 1", icon: "🌅", time: "6h" },
-                                        { idx: 1, hour: 11, label: "Đoạn 2", icon: "☀️", time: "11h" },
-                                        { idx: 2, hour: 17, label: "Đoạn 3", icon: "🌆", time: "17h" },
-                                        { idx: 3, hour: 21, label: "Đoạn 4", icon: "🌙", time: "21h" },
+                                    const allSlots = [
+                                        { idx: 0, hour: 6, icon: "🌅", time: "6h" },
+                                        { idx: 1, hour: 11, icon: "☀️", time: "11h" },
+                                        { idx: 2, hour: 17, icon: "🌆", time: "17h" },
+                                        { idx: 3, hour: 21, icon: "🌙", time: "21h" },
                                     ];
-                                    
-                                    // Determine status: done / active / waiting
-                                    const completedCount = segments.filter(seg => currentDecimal >= seg.hour + 0.5).length;
+                                    const scheduledHours = new Set(segs.map(seg => seg.hour));
+                                    const completedCount = allSlots.filter(slot => scheduledHours.has(slot.hour) && currentDecimal >= slot.hour + 0.5).length;
                                     
                                     return (
                                         <div className="space-y-1.5 pt-1">
-                                            {/* 4 segments row */}
                                             <div className="flex items-center gap-1">
-                                                {segments.map((seg) => {
-                                                    const isDone = currentDecimal >= seg.hour + 0.5; // 30 phút sau giờ bắn = đã gửi xong
-                                                    const isActive = !isDone && currentDecimal >= seg.hour - 0.5 && currentDecimal < seg.hour + 0.5;
-                                                    const isNext = !isDone && !isActive && seg.hour === s.hour;
+                                                {allSlots.map((slot) => {
+                                                    const isScheduled = scheduledHours.has(slot.hour);
+                                                    const isDone = isScheduled && currentDecimal >= slot.hour + 0.5;
+                                                    const isActive = isScheduled && !isDone && currentDecimal >= slot.hour - 0.5 && currentDecimal < slot.hour + 0.5;
                                                     
                                                     return (
                                                         <div
-                                                            key={seg.idx}
+                                                            key={slot.idx}
                                                             className={`flex-1 flex items-center justify-center gap-0.5 py-1 rounded-lg text-[10px] font-semibold transition-all ${
                                                                 isDone
                                                                     ? "bg-green-100 text-green-700 border border-green-200"
                                                                     : isActive
                                                                     ? "bg-amber-100 text-amber-700 border border-amber-300 animate-pulse"
-                                                                    : isNext
+                                                                    : isScheduled
                                                                     ? "bg-violet-50 text-violet-600 border border-violet-200"
-                                                                    : "bg-slate-50 text-slate-400 border border-slate-100"
+                                                                    : "bg-slate-50 text-slate-300 border border-slate-100"
                                                             }`}
                                                         >
-                                                            <span>{seg.icon}</span>
-                                                            <span>{seg.time}</span>
+                                                            <span>{slot.icon}</span>
+                                                            <span>{slot.time}</span>
                                                             {isDone && <span>✓</span>}
                                                             {isActive && <span>⚡</span>}
+                                                            {!isScheduled && <span>—</span>}
                                                         </div>
                                                     );
                                                 })}
                                             </div>
-                                            {/* Mini progress bar */}
                                             <div className="flex items-center gap-1.5">
                                                 <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
                                                     <div
                                                         className="h-full rounded-full transition-all duration-500 bg-gradient-to-r from-green-400 to-emerald-500"
-                                                        style={{ width: `${Math.min(100, (completedCount / 4) * 100)}%` }}
+                                                        style={{ width: `${Math.min(100, (completedCount / segs.length) * 100)}%` }}
                                                     />
                                                 </div>
                                                 <span className="text-[9px] text-slate-400 font-medium whitespace-nowrap">
-                                                    {completedCount}/4 đoạn
+                                                    {completedCount}/{segs.length} đoạn
                                                 </span>
                                             </div>
                                         </div>
                                     );
                                 })()}
-                                {/* Note row */}
                                 {isEditing && (
                                     <div className="flex gap-2">
-                                        <input
-                                            value={editNote}
-                                            onChange={e => setEditNote(e.target.value)}
-                                            placeholder="Ghi chú..."
-                                            className="flex-1 text-xs rounded-lg border border-blue-200 px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-300"
-                                        />
+                                        <input value={editNote} onChange={e => setEditNote(e.target.value)} placeholder="Ghi chú..." className="flex-1 text-xs rounded-lg border border-blue-200 px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-300" />
                                         <button onClick={() => saveNote(s.id)} className="text-xs px-2 py-1 rounded-lg bg-blue-500 text-white hover:bg-blue-600">Lưu</button>
                                         <button onClick={() => setEditingScheduleId(null)} className="text-xs px-2 py-1 rounded-lg bg-slate-200 text-slate-600 hover:bg-slate-300">Huỷ</button>
                                     </div>
                                 )}
-                                {!isEditing && s.note && (
-                                    <p className="text-[10px] text-slate-400 italic">📝 {s.note}</p>
-                                )}
+                                {!isEditing && s.note && <p className="text-[10px] text-slate-400 italic">📝 {s.note}</p>}
                             </div>
                         );
                     })}
