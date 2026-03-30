@@ -180,13 +180,13 @@ async function fetchCRMConversations(
     pageId: string,
     _page: number
 ): Promise<object | null> {
-    const limit = 200; // ═══ INCREASED: fetch 200 per page instead of 50 ═══
+    const limit = 500; // ═══ MAX: fetch 500 per page ═══
     const allConversations: CRMConversation[] = [];
     const seenIds = new Set<string>(); // ═══ DEDUP: track IDs đã thấy ═══
     let currentPage = 1;
     let emptyStreak = 0;
-    const maxEmptyPages = 3; // ═══ INCREASED: cho phép 3 empty pages trước khi stop ═══
-    const maxPages = 50; // ═══ INCREASED: max 50 pages × 200 = 10,000 conversations ═══
+    const maxEmptyPages = 5; // ═══ MAX: cho phép 5 empty pages trước khi stop ═══
+    const maxPages = 200; // ═══ MAX: 200 pages × 500 = 100,000 conversations ═══
     let crmApiError: string | null = null;
     let consecutiveDupPages = 0; // Track consecutive all-duplicate pages
 
@@ -231,8 +231,8 @@ async function fetchCRMConversations(
 
             if (newCount === 0) {
                 consecutiveDupPages++;
-                // ═══ RELAXED: cần 2 consecutive all-duplicate pages mới stop ═══
-                if (consecutiveDupPages >= 2) {
+                // ═══ RELAXED: cần 5 consecutive all-duplicate pages mới stop ═══
+                if (consecutiveDupPages >= 5) {
                     console.log(`[broadcast] CRM: ${consecutiveDupPages} consecutive all-duplicate pages → stopping`);
                     break;
                 }
