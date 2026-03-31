@@ -100,6 +100,67 @@ export async function GET(req: NextRequest) {
         const page = searchParams.get("page") || "1";
 
         if (!shopId) {
+            // ─── getPages=true without shopId → fetch pages from ALL shops ───
+            if (getPages) {
+                try {
+                    const allPages: Array<{ pageId: string; name: string; platform: string; shopName: string }> = [];
+                    const seenPageIds = new Set<string>();
+
+                    await Promise.all(config.poscake.shops.map(async (s) => {
+                        try {
+                            const shopRes = await fetch(
+                                `${config.poscake.api_url}/shops/${s.shop_id}?api_key=${s.api_key}`
+                            );
+                            const shopData = await shopRes.json();
+                            const shopInfo = shopData?.shop || shopData;
+                            for (const p of (shopInfo?.pages || [])) {
+                                const pid = String(p.id);
+                                if (!seenPageIds.has(pid)) {
+                                    seenPageIds.add(pid);
+                                    allPages.push({
+                                        pageId: pid,
+                                        name: p.name || `Page ${pid}`,
+                                        platform: p.platform || "facebook",
+                                        shopName: s.name,
+                                    });
+                                }
+                            }
+                        } catch (err) {
+                            console.error(`[broadcast] Fetch pages for shop ${s.name} error:`, err);
+                        }
+                    }));
+
+                    allPages.sort((a, b) => a.name.localeCompare(b.name));
+                    return NextResponse.json({ pages: allPages, shopName: "Tất cả", totalPages: allPages.length });
+                } catch (err) {
+                    console.error("[broadcast] All pages fetch error:", err);
+                    return NextResponse.json({ pages: [], shopName: "Tất cả" });
+                }
+            }
+
+            // ─── No shopId, but have pageFilter → CRM-only mode ───
+            if (pageFilter && config.pancake_crm?.api_token) {
+                try {
+                    const crmData = await fetchCRMConversations(
+                        config.pancake_crm.api_url,
+                        config.pancake_crm.api_token,
+                        pageFilter,
+                        Number(page)
+                    );
+                    if (crmData) return NextResponse.json(crmData);
+                    return NextResponse.json({
+                        customers: [], total: 0, page: 1, totalPages: 1,
+                        crmWarning: `⚠️ CRM không trả data cho page ${pageFilter}. Có thể cần đăng nhập lại Pancake.`,
+                    });
+                } catch (err) {
+                    console.error("[broadcast] CRM-only error:", err);
+                    return NextResponse.json({
+                        customers: [], total: 0, page: 1, totalPages: 1,
+                        crmWarning: `⚠️ CRM lỗi: ${err instanceof Error ? err.message : String(err)}`,
+                    });
+                }
+            }
+
             const shops = config.poscake.shops.map((s) => ({
                 name: s.name,
                 shop_id: s.shop_id,
@@ -156,16 +217,13 @@ export async function GET(req: NextRequest) {
         }
 
         // ─── Fallback: POS Customers (only buyers) ────────────────────────
-        // Khi CRM fail → bỏ pageFilter vì POS pageFbId format khác CRM pageId
-        // POS dùng fb_id.split("_")[0] làm pageFbId, không khớp CRM pageId → filter = 0
-        const posPageFilter = crmError ? "" : pageFilter;
-        const posResponse = await fetchPOSCustomers(config, shop, page, posPageFilter);
+        const posResponse = await fetchPOSCustomers(config, shop, page, pageFilter);
         // Inject CRM warning into POS response so frontend can display it
         if (crmError) {
             const posData = await posResponse.json();
             return NextResponse.json({
                 ...posData,
-                crmWarning: `⚠️ ${crmError} — Chỉ hiện thị khách ĐÃ MUA từ POS. Để lấy TẤT CẢ khách nhắn tin, đăng nhập lại Pancake CRM.`,
+                crmWarning: `⚠️ ${crmError} — Chỉ hiển thị khách ĐÃ MUA từ POS. Để lấy TẤT CẢ khách nhắn tin, đăng nhập lại Pancake CRM.`,
             });
         }
         return posResponse;

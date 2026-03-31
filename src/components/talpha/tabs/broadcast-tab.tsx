@@ -252,13 +252,8 @@ export default function BroadcastTab() {
             .finally(() => setIsLoadingShops(false));
     }, []);
 
-    // Load pages when shop changes
+    // Load pages when shop changes (or ALL pages when no shop)
     const loadPages = useCallback(async (shopId: string) => {
-        if (!shopId) {
-            setPages([]);
-            setSelectedPageId("");
-            return;
-        }
         setIsLoadingPages(true);
         setPages([]);
         setSelectedPageId("");
@@ -266,7 +261,11 @@ export default function BroadcastTab() {
         setSendResults(null);
 
         try {
-            const res = await fetch(`/api/broadcast?shopId=${shopId}&getPages=true`);
+            // If no shopId → fetch pages from ALL shops
+            const url = shopId
+                ? `/api/broadcast?shopId=${shopId}&getPages=true`
+                : `/api/broadcast?getPages=true`;
+            const res = await fetch(url);
             const data = await res.json();
             if (data.pages) {
                 setPages(data.pages);
@@ -278,19 +277,25 @@ export default function BroadcastTab() {
         }
     }, []);
 
+    // Auto-load ALL pages on mount (TH2: không cần chọn shop)
+    useEffect(() => {
+        loadPages("");
+    }, [loadPages]);
+
     // CRM warning state
     const [crmWarning, setCrmWarning] = useState<string | null>(null);
 
     // Load customers (with optional page filter)
     const loadCustomers = useCallback(async (shopId: string, page = 1, pageFilter = "") => {
-        if (!shopId) return;
+        if (!shopId && !pageFilter) return; // cho phép không chọn shop nếu có pageFilter
         setIsLoadingCustomers(true);
         setSelectedIds(new Set());
         setSendResults(null);
         setCrmWarning(null);
 
         try {
-            let url = `/api/broadcast?shopId=${shopId}&page=${page}`;
+            let url = `/api/broadcast?page=${page}`;
+            if (shopId) url += `&shopId=${shopId}`;
             if (pageFilter) url += `&pageFilter=${encodeURIComponent(pageFilter)}`;
 
             const res = await fetch(url);
@@ -934,7 +939,7 @@ export default function BroadcastTab() {
                             onChange={(e) => { setPageSearch(e.target.value); if (!isPageDropdownOpen) setIsPageDropdownOpen(true); }}
                             onFocus={() => { setIsPageDropdownOpen(true); setPageSearch(""); }}
                             placeholder={isLoadingPages ? "Đang tải pages..." : "Tìm page theo tên hoặc ID..."}
-                            disabled={!selectedShopId || isLoadingPages}
+                            disabled={isLoadingPages}
                             className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 pl-9 pr-8 text-sm text-slate-700 placeholder:text-slate-300 focus:outline-none focus:ring-2 focus:ring-violet-400/30 shadow-sm"
                         />
                         <ChevronDown className={`absolute right-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 pointer-events-none transition-transform ${isPageDropdownOpen ? "rotate-180" : ""}`} />
@@ -998,10 +1003,10 @@ export default function BroadcastTab() {
 
                 {/* Lọc + Refresh + Count */}
                 <div className="flex items-end gap-2 flex-shrink-0">
-                    <button onClick={() => loadCustomers(selectedShopId, currentPage, selectedPageId)} disabled={!selectedShopId || isLoadingCustomers} className="rounded-xl border border-slate-200 bg-white p-2.5 text-slate-600 hover:bg-slate-50 transition-colors disabled:opacity-50 shadow-sm">
+                    <button onClick={() => loadCustomers(selectedShopId, currentPage, selectedPageId)} disabled={(!selectedShopId && !selectedPageId) || isLoadingCustomers} className="rounded-xl border border-slate-200 bg-white p-2.5 text-slate-600 hover:bg-slate-50 transition-colors disabled:opacity-50 shadow-sm">
                         <RefreshCw className={`h-4 w-4 ${isLoadingCustomers ? "animate-spin" : ""}`} />
                     </button>
-                    <button onClick={async () => { await loadCustomers(selectedShopId, 1, selectedPageId); setFilterActive(true); }} disabled={!selectedShopId || isLoadingCustomers} className="rounded-xl bg-gradient-to-r from-violet-600 to-purple-600 px-4 py-2.5 text-xs font-semibold text-white shadow-sm hover:shadow-md transition-all disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap">
+                    <button onClick={async () => { await loadCustomers(selectedShopId, 1, selectedPageId); setFilterActive(true); }} disabled={(!selectedShopId && !selectedPageId) || isLoadingCustomers} className="rounded-xl bg-gradient-to-r from-violet-600 to-purple-600 px-4 py-2.5 text-xs font-semibold text-white shadow-sm hover:shadow-md transition-all disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap">
                         🔍 Lọc data
                     </button>
                     {filterActive && (
@@ -1028,12 +1033,6 @@ export default function BroadcastTab() {
                         <p className="text-xs text-amber-600 mt-1">
                             👉 Vào <a href="https://pages.fm" target="_blank" rel="noopener noreferrer" className="underline font-medium hover:text-amber-800">pages.fm</a> → Đăng nhập lại Facebook → Quay lại đây và bấm 🔍 Lọc data
                         </p>
-                        <button
-                            onClick={() => { setCrmWarning(null); loadCustomers(selectedShopId, 1, selectedPageId); }}
-                            className="mt-2 px-3 py-1 text-xs font-medium bg-amber-200 hover:bg-amber-300 text-amber-800 rounded-lg transition-colors inline-flex items-center gap-1"
-                        >
-                            <RefreshCw className="h-3 w-3" /> Thử lại sau khi đăng nhập
-                        </button>
                     </div>
                     <button onClick={() => setCrmWarning(null)} className="text-amber-500 hover:text-amber-700">
                         <X className="h-4 w-4" />
