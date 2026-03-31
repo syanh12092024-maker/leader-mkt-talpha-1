@@ -1073,18 +1073,10 @@ export default function BroadcastTab() {
                     </div>
                 )}
 
-                {!isLoadingCustomers && customers.length === 0 && selectedShopId && (
+                {!isLoadingCustomers && customers.length === 0 && (
                     <div className="flex flex-col items-center justify-center py-12 text-sm text-slate-400">
                         <Users className="h-8 w-8 mb-2 text-slate-300" />
-                        {selectedPageId ? "Không có khách nào từ page này" : "Chọn page để xem khách hàng"}
-                    </div>
-                )}
-
-                {/* No shop */}
-                {!selectedShopId && !isLoadingShops && (
-                    <div className="flex flex-col items-center justify-center py-12 text-sm text-slate-400">
-                        <MessageSquare className="h-8 w-8 mb-2 text-slate-300" />
-                        Chọn shop để xem danh sách pages
+                        {selectedPageId ? "Không có khách nào từ page này" : "Chọn page và bấm 🔍 Lọc data để xem khách hàng"}
                     </div>
                 )}
 
