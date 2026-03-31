@@ -24,9 +24,9 @@ export async function GET(req: NextRequest) {
             });
         }
 
-        const { ads, catalog } = await TAlphaAdsModel.fetchMetaAds(fromDate, toDate);
+        const { ads } = await TAlphaAdsModel.fetchMetaAds(fromDate, toDate);
         const orders = await TAlphaAdsModel.fetchPOSHybrid(fromDate, toDate);
-        const result = TAlphaAdsModel.aggregate(ads, orders, catalog);
+        const result = TAlphaAdsModel.aggregate(ads, orders);
 
         return NextResponse.json({
             success: true,
@@ -50,9 +50,9 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ success: false, error: "Missing date or sheet_id" }, { status: 400 });
         }
 
-        const { ads, catalog } = await TAlphaAdsModel.fetchMetaAds(date, date);
+        const { ads } = await TAlphaAdsModel.fetchMetaAds(date, date);
         const orders = await TAlphaAdsModel.fetchPOSHybrid(date, date);
-        const result = TAlphaAdsModel.aggregate(ads, orders, catalog);
+        const result = TAlphaAdsModel.aggregate(ads, orders);
 
         const syncService = new GoogleSheetsSyncService(sheet_id);
         const syncedData = await syncService.syncAdsData({

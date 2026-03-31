@@ -309,30 +309,12 @@ export class TAlphaAdsModel {
             .toLowerCase().trim();
     }
 
-    static aggregate(ads: any[], orders: TAlphaOrder[], catalog?: Record<string, { campaign_id: string; campaign_name: string; account_id: string }>) {
-        // Load marketer_map từ config
-        const cfg = this.loadConfig();
-        const marketerMap: Record<string, string> = {}; // pos_name (normalized) → campaign_key (upper)
-        (cfg.marketer_map || []).forEach(m => {
-            marketerMap[this.normalizeName(m.pos_name)] = m.campaign_key.toUpperCase();
-        });
-
-        // ═══ PASS 1: Match POS orders by ad_id ═══
-        // Primary map: ad_id → index in today's ads (has spend data)
+    static aggregate(ads: any[], orders: TAlphaOrder[]) {
+        // ═══ RULE DUY NHẤT: Match POS orders by ad_id ═══
+        // Pancake gắn ad_id khi KH reply quảng cáo → tạo đơn POS
+        // Chỉ match khi order.ad_id trùng với ad.ad_id đang chạy
         const adIdMap = new Map<string, number>();
         ads.forEach((ad, idx) => { if (ad.ad_id) adIdMap.set(String(ad.ad_id), idx); });
-
-        // Secondary map: campaign_id → best spending ad index (for catalog fallback)
-        // When an order's ad_id is in catalog but not in today's ads, route to the campaign's best ad
-        const campaignBestAdIdx = new Map<string, number>(); // campaign_id → idx of highest-spend ad
-        ads.forEach((ad, idx) => {
-            const cid = String(ad.campaign_id || '');
-            if (!cid) return;
-            const existing = campaignBestAdIdx.get(cid);
-            if (existing === undefined || ads[idx].spend > ads[existing].spend) {
-                campaignBestAdIdx.set(cid, idx);
-            }
-        });
 
         const matchedOrderIds = new Set<string>();
 
@@ -341,66 +323,19 @@ export class TAlphaAdsModel {
             if (!adId) return;
 
             if (adIdMap.has(adId)) {
-                // Direct match: ad has spend today
                 const idx = adIdMap.get(adId)!;
                 ads[idx].orders += 1;
                 ads[idx].revenue_vnd += order.total_price_vnd;
                 matchedOrderIds.add(order.id);
-            } else if (catalog && catalog[adId]) {
-                // Catalog fallback: ad doesn't have spend today, but belongs to a known campaign
-                const { campaign_id } = catalog[adId];
-                const bestIdx = campaignBestAdIdx.get(String(campaign_id));
-                if (bestIdx !== undefined) {
-                    ads[bestIdx].orders += 1;
-                    ads[bestIdx].revenue_vnd += order.total_price_vnd;
-                    matchedOrderIds.add(order.id);
-                    console.log(`[POS catalog] Order ${order.id} ad_id=${adId} → campaign ${campaign_id} (catalog fallback)`);
-                }
             }
         });
 
-        // ═══ PASS 1.5: Match unmatched orders by marketer name ═══
-        // Cho đơn không có ad_id nhưng có marketer name → tìm campaign của marketer đó
-        if (Object.keys(marketerMap).length > 0) {
-            orders.forEach(order => {
-                if (matchedOrderIds.has(order.id)) return; // đã match rồi
-                if (!order.marketer || order.marketer === 'N/A') return;
-
-                const campaignKey = marketerMap[this.normalizeName(order.marketer)];
-                if (!campaignKey) return; // không có trong map
-
-                const market = order.shop_name; // e.g. "Saudi"
-
-                // Tìm ad có cùng market + marketer campaign_key + spend cao nhất
-                let bestIdx = -1, bestSpend = -1;
-                ads.forEach((ad, idx) => {
-                    const adMarket = this.getCampaignMarket(ad.campaign_name);
-                    const adKey = (ad.campaign_name || '').split('/')[1]?.trim().toUpperCase() || '';
-                    if (adMarket === market && adKey === campaignKey && ad.spend > bestSpend) {
-                        bestIdx = idx;
-                        bestSpend = ad.spend;
-                    }
-                });
-
-                if (bestIdx >= 0) {
-                    ads[bestIdx].orders += 1;
-                    ads[bestIdx].revenue_vnd += order.total_price_vnd;
-                    matchedOrderIds.add(order.id);
-                }
-            });
-        }
-
-        // ═══ PASS 2 ĐÃ BỊ XÓA ═══
-        // Trước đây: phân bổ đơn không match theo tỷ lệ spend → không chính xác
-        // Giờ: chỉ dùng Pass 1 (ad_id) + Pass 1.5 (marketer name)
-        // Đơn không match → không gán vào campaign nào (honest reporting)
+        // Đơn không có ad_id hoặc ad_id không match → không gán (honest reporting)
         const unmatchedOrders = orders.filter(o => !matchedOrderIds.has(o.id));
-        const unmatchedCount = unmatchedOrders.length;
-        const unmatchedRevenue = unmatchedOrders.reduce((s, o) => s + o.total_price_vnd, 0);
-        if (unmatchedCount > 0) {
-            console.log(`[POS] ${unmatchedCount} orders unmatched (no ad_id, marketer unknown) — revenue: ${unmatchedRevenue.toLocaleString()}đ`);
+        if (unmatchedOrders.length > 0) {
+            const unmatchedRevenue = unmatchedOrders.reduce((s, o) => s + o.total_price_vnd, 0);
+            console.log(`[POS] ${unmatchedOrders.length} orders unmatched (no ad_id) — revenue: ${unmatchedRevenue.toLocaleString()}đ`);
         }
-
 
         // ═══ Aggregate totals ═══
         const totalSpend = ads.reduce((s, a) => s + a.spend, 0);

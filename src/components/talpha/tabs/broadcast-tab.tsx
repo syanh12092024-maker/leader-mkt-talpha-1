@@ -128,6 +128,7 @@ interface BroadcastSchedule {
     note?: string;
     lastSegmentIndex?: number;
     lastRunDate?: string; // ISO date "2026-03-30" — chỉ chạy 1 lần/ngày/segment
+    firedDates?: string[]; // Danh sách ngày bắn thành công, ví dụ ["2026-03-28", "2026-03-29"]
 }
 
 const SCHEDULE_KEY = "broadcast_schedules_v2";
@@ -650,10 +651,16 @@ export default function BroadcastTab() {
                                 if (errorCount === 0) {
                                     seg.status = 'sent';
                                     seg.sentAt = new Date().toISOString();
+                                    // Ghi ngày bắn thành công
+                                    if (!schedule.firedDates) schedule.firedDates = [];
+                                    if (!schedule.firedDates.includes(todayStr)) schedule.firedDates.push(todayStr);
                                 } else if (successCount > 0) {
                                     seg.status = 'sent';
                                     seg.sentAt = new Date().toISOString();
                                     seg.error = `${errorCount} lỗi / ${recipients.length} tổng`;
+                                    // Ghi ngày bắn thành công (dù có 1 số lỗi)
+                                    if (!schedule.firedDates) schedule.firedDates = [];
+                                    if (!schedule.firedDates.includes(todayStr)) schedule.firedDates.push(todayStr);
                                 } else {
                                     seg.status = 'error';
                                     seg.error = `Tất cả ${errorCount} gửi thất bại`;
@@ -1600,6 +1607,34 @@ export default function BroadcastTab() {
                                     </div>
                                 )}
                                 {!isEditing && s.note && <p className="text-[10px] text-slate-400 italic">📝 {s.note}</p>}
+
+                                {/* ─── Ngày bắt đầu + Lịch sử bắn thành công ─── */}
+                                <div className="pt-1.5 border-t border-slate-100 space-y-1">
+                                    <div className="flex items-center gap-1.5">
+                                        <CalendarClock className="h-3 w-3 text-slate-400 shrink-0" />
+                                        <span className="text-[10px] text-slate-400">
+                                            Bắt đầu: <span className="font-semibold text-slate-500">{new Date(s.createdAt).toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' })}</span>
+                                        </span>
+                                    </div>
+                                    {s.firedDates && s.firedDates.length > 0 && (
+                                        <div className="flex items-start gap-1.5">
+                                            <CheckCircle2 className="h-3 w-3 text-green-500 shrink-0 mt-0.5" />
+                                            <div className="flex flex-wrap gap-1">
+                                                {s.firedDates.slice(-10).map(date => (
+                                                    <span key={date} className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md bg-green-50 border border-green-200 text-[9px] font-semibold text-green-700">
+                                                        ✓ {new Date(date + 'T00:00:00').toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' })}
+                                                    </span>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+                                    {(!s.firedDates || s.firedDates.length === 0) && (
+                                        <div className="flex items-center gap-1.5">
+                                            <CheckCircle2 className="h-3 w-3 text-slate-300 shrink-0" />
+                                            <span className="text-[10px] text-slate-300 italic">Chưa bắn thành công ngày nào</span>
+                                        </div>
+                                    )}
+                                </div>
                             </div>
                         );
                     })}
