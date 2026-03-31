@@ -156,13 +156,16 @@ export async function GET(req: NextRequest) {
         }
 
         // ─── Fallback: POS Customers (only buyers) ────────────────────────
-        const posResponse = await fetchPOSCustomers(config, shop, page, pageFilter);
+        // Khi CRM fail → bỏ pageFilter vì POS pageFbId format khác CRM pageId
+        // POS dùng fb_id.split("_")[0] làm pageFbId, không khớp CRM pageId → filter = 0
+        const posPageFilter = crmError ? "" : pageFilter;
+        const posResponse = await fetchPOSCustomers(config, shop, page, posPageFilter);
         // Inject CRM warning into POS response so frontend can display it
         if (crmError) {
             const posData = await posResponse.json();
             return NextResponse.json({
                 ...posData,
-                crmWarning: `⚠️ ${crmError} — Chỉ hiển thị khách ĐÃ MUA từ POS. Để lấy TẤT CẢ khách nhắn tin, đăng nhập lại Pancake CRM.`,
+                crmWarning: `⚠️ ${crmError} — Chỉ hiện thị khách ĐÃ MUA từ POS. Để lấy TẤT CẢ khách nhắn tin, đăng nhập lại Pancake CRM.`,
             });
         }
         return posResponse;

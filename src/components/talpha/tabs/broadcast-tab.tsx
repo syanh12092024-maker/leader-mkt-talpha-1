@@ -1028,6 +1028,12 @@ export default function BroadcastTab() {
                         <p className="text-xs text-amber-600 mt-1">
                             👉 Vào <a href="https://pages.fm" target="_blank" rel="noopener noreferrer" className="underline font-medium hover:text-amber-800">pages.fm</a> → Đăng nhập lại Facebook → Quay lại đây và bấm 🔍 Lọc data
                         </p>
+                        <button
+                            onClick={() => { setCrmWarning(null); loadCustomers(selectedShopId, 1, selectedPageId); }}
+                            className="mt-2 px-3 py-1 text-xs font-medium bg-amber-200 hover:bg-amber-300 text-amber-800 rounded-lg transition-colors inline-flex items-center gap-1"
+                        >
+                            <RefreshCw className="h-3 w-3" /> Thử lại sau khi đăng nhập
+                        </button>
                     </div>
                     <button onClick={() => setCrmWarning(null)} className="text-amber-500 hover:text-amber-700">
                         <X className="h-4 w-4" />
