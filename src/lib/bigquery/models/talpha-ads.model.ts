@@ -253,36 +253,38 @@ export class TAlphaAdsModel {
                     shop.name === "Japan" ? "JPY" :
                     shop.name === "Taiwan" ? "TWD" : "AED";
                 const rate = this.getExchangeRate(currency);
+                // JPY is a zero-decimal currency (no cents), cod is already in yen
                 const ZERO_DECIMAL_CURRENCIES = ["JPY"];
                 const isZeroDecimal = ZERO_DECIMAL_CURRENCIES.includes(currency);
 
-                // ═══ Phân trang đúng: dùng page_number (API trả max 10/page) ═══
+                // ═══ PAGINATION FIX: Pancake POS API returns max 10 orders/page ═══
+                // Must use page_number to iterate through all pages
                 let currentPage = 1;
                 let totalPages = 1;
                 let shopOrderCount = 0;
-                let hasOutOfRange = false;
+                let reachedPastOrders = false;
 
-                while (currentPage <= totalPages && !hasOutOfRange) {
+                while (currentPage <= totalPages && !reachedPastOrders) {
                     const url = `${shop.api_url}/shops/${shop.shop_id}/orders?api_key=${shop.api_key}&page_number=${currentPage}`;
                     const res = await fetch(url);
                     const data = await res.json();
-
                     totalPages = data.total_pages || 1;
-                    const pageOrders = data.data || [];
 
+                    const pageOrders = data.data || [];
                     if (pageOrders.length === 0) break;
 
                     for (const o of pageOrders) {
-                        // POS inserted_at is UTC but lacks 'Z' suffix
-                        const utcMs = new Date(String(o.inserted_at) + 'Z').getTime();
+                        // POS inserted_at is UTC but lacks 'Z' suffix — append it for correct parsing
+                        const rawInserted = String(o.inserted_at || '');
+                        if (!rawInserted) continue;
+                        const utcMs = new Date(rawInserted + 'Z').getTime();
                         const vnMs = utcMs + 7 * 60 * 60 * 1000;
                         const vn = new Date(vnMs);
                         const orderDate = `${vn.getUTCFullYear()}-${String(vn.getUTCMonth() + 1).padStart(2, '0')}-${String(vn.getUTCDate()).padStart(2, '0')}`;
 
-                        // Đơn POS được sắp xếp mới nhất → cũ nhất
-                        // Nếu orderDate < fromDate → tất cả đơn sau đều cũ hơn → dừng
+                        // Orders are sorted newest-first: if this order is before our date range, stop
                         if (orderDate < fromDate) {
-                            hasOutOfRange = true;
+                            reachedPastOrders = true;
                             break;
                         }
 
@@ -292,7 +294,7 @@ export class TAlphaAdsModel {
                             orders.push({
                                 id: String(o.id),
                                 shop_name: shop.name,
-                                ad_id: o.ad_id || null,
+                                ad_id: o.ad_id,
                                 marketer: o.marketer?.name || o.marketer || "N/A",
                                 total_price_local: priceLocal,
                                 total_price_vnd: priceLocal * rate,
@@ -303,11 +305,11 @@ export class TAlphaAdsModel {
                             shopOrderCount++;
                         }
                     }
-
                     currentPage++;
+                    // Safety: max 200 pages (2000 orders) per shop to avoid timeout
+                    if (currentPage > 200) break;
                 }
-
-                console.log(`[POS] ${shop.name}: ${shopOrderCount} orders (${fromDate} → ${toDate}), scanned ${currentPage - 1}/${totalPages} pages`);
+                console.log(`[POS] ${shop.name}: ${shopOrderCount} orders (${fromDate} → ${toDate}), scanned ${currentPage - 1} pages`);
             } catch (e) {
                 console.error(`POS API Error (${shop.name}):`, e);
             }
