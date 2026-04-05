@@ -106,9 +106,17 @@ export default function TALPHADashboardShell() {
                     )}
                 </header>
 
-                <div className={cn("w-full", (activeTab === "script-gen" || activeTab === "broadcast" || activeTab === "shipment") ? "p-3" : activeTab === "van-don" ? "p-4" : "p-6")}>
+                {/* Tabs that STAY MOUNTED (preserve state when switching) */}
+                <div className={cn("w-full", activeTab === "ads-command" ? "" : "p-6")} style={{ display: activeTab === "ads-command" ? undefined : "none" }}>
+                    <TALPHAAdsCommandTab />
+                </div>
+                <div className="w-full p-3" style={{ display: activeTab === "broadcast" ? undefined : "none" }}>
+                    <BroadcastTab />
+                </div>
+
+                {/* Tabs that UNMOUNT when inactive (lightweight, fast to reload) */}
+                <div className={cn("w-full", activeTab === "script-gen" ? "p-3" : activeTab === "shipment" ? "p-3" : activeTab === "van-don" ? "p-4" : "p-6")}>
                     {activeTab === "ceo" && <TALPHACeoOverviewTab dateRange={dateRange} projectId="TALPHA" />}
-                    {activeTab === "ads-command" && <TALPHAAdsCommandTab />}
                     {activeTab === "marketing" && <TALPHAMarketingTab dateRange={dateRange} projectId="TALPHA" />}
                     {activeTab === "products" && <TALPHAProductsTab dateRange={dateRange} projectId="TALPHA" />}
                     {activeTab === "pnl" && <TALPHAPnLTab dateRange={dateRange} projectId="TALPHA" />}
@@ -117,7 +125,6 @@ export default function TALPHADashboardShell() {
                     {activeTab === "spy-board" && <SpyBoardTab />}
                     {activeTab === "script-gen" && <ScriptGeneratorTab />}
                     {activeTab === "shipment" && <ShipmentTab />}
-                    {activeTab === "broadcast" && <BroadcastTab />}
                     {activeTab === "van-don" && <VanDonTab />}
                 </div>
             </main>
