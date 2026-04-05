@@ -3,6 +3,7 @@ import { TAlphaAdsModel } from "@/lib/bigquery/models/talpha-ads.model";
 import { GoogleSheetsSyncService } from "@/lib/google-sheets/services/talpha-sync.service";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60; // Vercel Pro: up to 60s for 21 ad accounts
 
 export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);

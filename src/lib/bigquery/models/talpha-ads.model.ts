@@ -53,7 +53,10 @@ export class TAlphaAdsModel {
 
         while (url && pageCount < 20) { // Safety limit: max 20 pages
             try {
-                const res = await fetch(url);
+                const controller = new AbortController();
+                const timeout = setTimeout(() => controller.abort(), 15000); // 15s timeout per page
+                const res = await fetch(url, { signal: controller.signal });
+                clearTimeout(timeout);
                 const json: any = await res.json();
 
                 if (json.error) {
@@ -67,8 +70,12 @@ export class TAlphaAdsModel {
 
                 url = json.paging?.next || null;
                 pageCount++;
-            } catch (e) {
-                console.error("Meta Ads fetch error:", e);
+            } catch (e: any) {
+                if (e.name === 'AbortError') {
+                    console.error("Meta Ads fetch timeout, continuing...");
+                } else {
+                    console.error("Meta Ads fetch error:", e);
+                }
                 break;
             }
         }
@@ -122,14 +129,14 @@ export class TAlphaAdsModel {
             try {
                 const url = `https://graph.facebook.com/v21.0/${accId}/insights?fields=${fields}&level=ad&limit=500${timeRange}&access_token=${access_token}`;
 
-                // Fetch campaign statuses + ad catalog in parallel
+                // Fetch insights + campaign statuses + ad catalog in parallel
                 const campaignStatusUrl = `https://graph.facebook.com/v21.0/${accId}/campaigns?fields=id,effective_status&limit=500&access_token=${access_token}`;
-                const [rows, campaignRows] = await Promise.all([
+                const [rows, campaignRows, catalog] = await Promise.all([
                     this.fetchAllPages(url),
                     this.fetchAllPages(campaignStatusUrl),
+                    this.fetchAdCatalog(accId, access_token),
                 ]);
                 // Merge catalog for this account
-                const catalog = await this.fetchAdCatalog(accId, access_token);
                 Object.assign(allCatalog, catalog);
 
                 // Build campaign_id → effective_status map
