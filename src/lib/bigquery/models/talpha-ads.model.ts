@@ -253,35 +253,61 @@ export class TAlphaAdsModel {
                     shop.name === "Japan" ? "JPY" :
                     shop.name === "Taiwan" ? "TWD" : "AED";
                 const rate = this.getExchangeRate(currency);
-                // JPY is a zero-decimal currency (no cents), cod is already in yen
                 const ZERO_DECIMAL_CURRENCIES = ["JPY"];
                 const isZeroDecimal = ZERO_DECIMAL_CURRENCIES.includes(currency);
-                const url = `${shop.api_url}/shops/${shop.shop_id}/orders?api_key=${shop.api_key}&limit=100`;
-                const res = await fetch(url);
-                const data = await res.json();
 
-                (data.data || []).forEach((o: any) => {
-                    // POS inserted_at is UTC but lacks 'Z' suffix — append it for correct parsing
-                    const utcMs = new Date(String(o.inserted_at) + 'Z').getTime();
-                    const vnMs = utcMs + 7 * 60 * 60 * 1000;
-                    const vn = new Date(vnMs);
-                    const orderDate = `${vn.getUTCFullYear()}-${String(vn.getUTCMonth() + 1).padStart(2, '0')}-${String(vn.getUTCDate()).padStart(2, '0')}`;
-                    if (orderDate >= fromDate && orderDate <= toDate) {
-                        const rawCod = o.cod || o.total_price || 0;
-                        const priceLocal = isZeroDecimal ? rawCod : rawCod / 100;
-                        orders.push({
-                            id: String(o.id),
-                            shop_name: shop.name,
-                            ad_id: o.ad_id,
-                            marketer: o.marketer?.name || o.marketer || "N/A",
-                            total_price_local: priceLocal,
-                            total_price_vnd: priceLocal * rate,
-                            status: o.status,
-                            inserted_at: o.inserted_at,
-                            customer_name: o.customer_name?.name || o.customer_name || "N/A"
-                        });
+                // ═══ Phân trang đúng: dùng page_number (API trả max 10/page) ═══
+                let currentPage = 1;
+                let totalPages = 1;
+                let shopOrderCount = 0;
+                let hasOutOfRange = false;
+
+                while (currentPage <= totalPages && !hasOutOfRange) {
+                    const url = `${shop.api_url}/shops/${shop.shop_id}/orders?api_key=${shop.api_key}&page_number=${currentPage}`;
+                    const res = await fetch(url);
+                    const data = await res.json();
+
+                    totalPages = data.total_pages || 1;
+                    const pageOrders = data.data || [];
+
+                    if (pageOrders.length === 0) break;
+
+                    for (const o of pageOrders) {
+                        // POS inserted_at is UTC but lacks 'Z' suffix
+                        const utcMs = new Date(String(o.inserted_at) + 'Z').getTime();
+                        const vnMs = utcMs + 7 * 60 * 60 * 1000;
+                        const vn = new Date(vnMs);
+                        const orderDate = `${vn.getUTCFullYear()}-${String(vn.getUTCMonth() + 1).padStart(2, '0')}-${String(vn.getUTCDate()).padStart(2, '0')}`;
+
+                        // Đơn POS được sắp xếp mới nhất → cũ nhất
+                        // Nếu orderDate < fromDate → tất cả đơn sau đều cũ hơn → dừng
+                        if (orderDate < fromDate) {
+                            hasOutOfRange = true;
+                            break;
+                        }
+
+                        if (orderDate >= fromDate && orderDate <= toDate) {
+                            const rawCod = o.cod || o.total_price || 0;
+                            const priceLocal = isZeroDecimal ? rawCod : rawCod / 100;
+                            orders.push({
+                                id: String(o.id),
+                                shop_name: shop.name,
+                                ad_id: o.ad_id || null,
+                                marketer: o.marketer?.name || o.marketer || "N/A",
+                                total_price_local: priceLocal,
+                                total_price_vnd: priceLocal * rate,
+                                status: o.status,
+                                inserted_at: o.inserted_at,
+                                customer_name: o.shipping_address?.full_name || o.customer_name?.name || o.customer_name || "N/A"
+                            });
+                            shopOrderCount++;
+                        }
                     }
-                });
+
+                    currentPage++;
+                }
+
+                console.log(`[POS] ${shop.name}: ${shopOrderCount} orders (${fromDate} → ${toDate}), scanned ${currentPage - 1}/${totalPages} pages`);
             } catch (e) {
                 console.error(`POS API Error (${shop.name}):`, e);
             }
