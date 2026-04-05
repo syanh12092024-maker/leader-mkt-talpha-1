@@ -132,19 +132,15 @@ export class TAlphaAdsModel {
             try {
                 const url = `https://graph.facebook.com/v21.0/${accId}/insights?fields=${fields}&level=ad&limit=500${timeRange}&access_token=${access_token}`;
 
-                // Fetch insights + campaign statuses + ad catalog in parallel
+                // Fetch insights + campaign statuses in parallel (removed catalog - unused)
                 const campaignStatusUrl = `https://graph.facebook.com/v21.0/${accId}/campaigns?fields=id,effective_status&limit=500&access_token=${access_token}`;
-                const [rows, campaignRows, catalog] = await Promise.all([
+                const [rows, campaignRows] = await Promise.all([
                     this.fetchAllPages(url),
                     this.fetchAllPages(campaignStatusUrl),
-                    this.fetchAdCatalog(accId, access_token),
                 ]);
-                console.log(`[META] ${accId}: ${rows.length} ads, ${campaignRows.length} campaigns`);
                 if (rows.length === 0) {
-                    metaErrors.push(`${accId}: 0 ads returned (token might lack access)`);
+                    metaErrors.push(`${accId}: 0 ads`);
                 }
-                // Merge catalog for this account
-                Object.assign(allCatalog, catalog);
 
                 // Build campaign_id → effective_status map
                 const statusMap: Record<string, string> = {};
@@ -250,14 +246,15 @@ export class TAlphaAdsModel {
                 metaErrors.push(msg);
             }
         }));
-        return { ads: allAds, catalog: allCatalog, errors: metaErrors };
+        return { ads: allAds, errors: metaErrors };
     }
 
     static async fetchPOSHybrid(fromDate: string, toDate: string): Promise<TAlphaOrder[]> {
         const cfg = this.loadConfig();
-        const orders: TAlphaOrder[] = [];
 
-        for (const shop of cfg.poscake.shops) {
+        // ═══ FETCH ALL 8 SHOPS IN PARALLEL (saves ~10s) ═══
+        const shopResults = await Promise.all(cfg.poscake.shops.map(async (shop) => {
+            const shopOrders: TAlphaOrder[] = [];
             try {
                 const currency =
                     shop.name === "UAE" ? "AED" :
@@ -269,20 +266,18 @@ export class TAlphaAdsModel {
                     shop.name === "Japan" ? "JPY" :
                     shop.name === "Taiwan" ? "TWD" : "AED";
                 const rate = this.getExchangeRate(currency);
-                // JPY is a zero-decimal currency (no cents), cod is already in yen
-                const ZERO_DECIMAL_CURRENCIES = ["JPY"];
-                const isZeroDecimal = ZERO_DECIMAL_CURRENCIES.includes(currency);
+                const isZeroDecimal = currency === "JPY";
 
-                // ═══ PAGINATION FIX: Pancake POS API returns max 10 orders/page ═══
-                // Must use page_number to iterate through all pages
                 let currentPage = 1;
                 let totalPages = 1;
-                let shopOrderCount = 0;
                 let reachedPastOrders = false;
 
                 while (currentPage <= totalPages && !reachedPastOrders) {
                     const url = `${shop.api_url}/shops/${shop.shop_id}/orders?api_key=${shop.api_key}&page_number=${currentPage}`;
-                    const res = await fetch(url);
+                    const controller = new AbortController();
+                    const timeout = setTimeout(() => controller.abort(), 10000);
+                    const res = await fetch(url, { signal: controller.signal });
+                    clearTimeout(timeout);
                     const data = await res.json();
                     totalPages = data.total_pages || 1;
 
@@ -290,7 +285,6 @@ export class TAlphaAdsModel {
                     if (pageOrders.length === 0) break;
 
                     for (const o of pageOrders) {
-                        // POS inserted_at is UTC but lacks 'Z' suffix — append it for correct parsing
                         const rawInserted = String(o.inserted_at || '');
                         if (!rawInserted) continue;
                         const utcMs = new Date(rawInserted + 'Z').getTime();
@@ -298,16 +292,12 @@ export class TAlphaAdsModel {
                         const vn = new Date(vnMs);
                         const orderDate = `${vn.getUTCFullYear()}-${String(vn.getUTCMonth() + 1).padStart(2, '0')}-${String(vn.getUTCDate()).padStart(2, '0')}`;
 
-                        // Orders are sorted newest-first: if this order is before our date range, stop
-                        if (orderDate < fromDate) {
-                            reachedPastOrders = true;
-                            break;
-                        }
+                        if (orderDate < fromDate) { reachedPastOrders = true; break; }
 
                         if (orderDate >= fromDate && orderDate <= toDate) {
                             const rawCod = o.cod || o.total_price || 0;
                             const priceLocal = isZeroDecimal ? rawCod : rawCod / 100;
-                            orders.push({
+                            shopOrders.push({
                                 id: String(o.id),
                                 shop_name: shop.name,
                                 ad_id: o.ad_id,
@@ -318,19 +308,18 @@ export class TAlphaAdsModel {
                                 inserted_at: o.inserted_at,
                                 customer_name: o.shipping_address?.full_name || o.customer_name?.name || o.customer_name || "N/A"
                             });
-                            shopOrderCount++;
                         }
                     }
                     currentPage++;
-                    // Safety: max 200 pages (2000 orders) per shop to avoid timeout
                     if (currentPage > 200) break;
                 }
-                console.log(`[POS] ${shop.name}: ${shopOrderCount} orders (${fromDate} → ${toDate}), scanned ${currentPage - 1} pages`);
             } catch (e) {
-                console.error(`POS API Error (${shop.name}):`, e);
+                console.error(`POS Error (${shop.name}):`, e);
             }
-        }
-        return orders;
+            return shopOrders;
+        }));
+
+        return shopResults.flat();
     }
 
     // Map campaign name prefix to POS shop name
