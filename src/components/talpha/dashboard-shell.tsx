@@ -106,26 +106,66 @@ export default function TALPHADashboardShell() {
                     )}
                 </header>
 
-                {/* Tabs that STAY MOUNTED (preserve state when switching) */}
-                <div className={cn("w-full", activeTab === "ads-command" ? "" : "p-6")} style={{ display: activeTab === "ads-command" ? undefined : "none" }}>
+                {/* ALL TABS STAY MOUNTED (preserve state when switching) */}
+                
+                {/* CEO Overview */}
+                <div className="w-full p-6" style={{ display: activeTab === "ceo" ? "block" : "none" }}>
+                    <TALPHACeoOverviewTab dateRange={dateRange} projectId="TALPHA" />
+                </div>
+
+                {/* Ads Command Center */}
+                <div className="w-full" style={{ display: activeTab === "ads-command" ? "block" : "none" }}>
                     <TALPHAAdsCommandTab />
                 </div>
-                <div className="w-full p-3" style={{ display: activeTab === "broadcast" ? undefined : "none" }}>
+
+                {/* Marketing & QC */}
+                <div className="w-full p-6" style={{ display: activeTab === "marketing" ? "block" : "none" }}>
+                    <TALPHAMarketingTab dateRange={dateRange} projectId="TALPHA" />
+                </div>
+
+                {/* Products & Inventory */}
+                <div className="w-full p-6" style={{ display: activeTab === "products" ? "block" : "none" }}>
+                    <TALPHAProductsTab dateRange={dateRange} projectId="TALPHA" />
+                </div>
+
+                {/* PnL */}
+                <div className="w-full p-6" style={{ display: activeTab === "pnl" ? "block" : "none" }}>
+                    <TALPHAPnLTab dateRange={dateRange} projectId="TALPHA" />
+                </div>
+
+                {/* Customers */}
+                <div className="w-full p-6" style={{ display: activeTab === "customers" ? "block" : "none" }}>
+                    <TALPHACustomerTab dateRange={dateRange} projectId="TALPHA" />
+                </div>
+
+                {/* Market Intel */}
+                <div className="w-full p-6" style={{ display: activeTab === "market-intel" ? "block" : "none" }}>
+                    <TALPHAMarketIntelTab dateRange={dateRange} projectId="TALPHA" />
+                </div>
+
+                {/* Spy Board */}
+                <div className="w-full p-6" style={{ display: activeTab === "spy-board" ? "block" : "none" }}>
+                    <SpyBoardTab />
+                </div>
+
+                {/* Script Generator */}
+                <div className="w-full p-3" style={{ display: activeTab === "script-gen" ? "block" : "none" }}>
+                    <ScriptGeneratorTab />
+                </div>
+
+                {/* Shipment */}
+                <div className="w-full p-3" style={{ display: activeTab === "shipment" ? "block" : "none" }}>
+                    <ShipmentTab />
+                </div>
+
+                {/* Broadcast */}
+                <div className="w-full p-3" style={{ display: activeTab === "broadcast" ? "block" : "none" }}>
                     <BroadcastTab />
                 </div>
 
-                {/* Tabs that UNMOUNT when inactive (lightweight, fast to reload) */}
-                <div className={cn("w-full", activeTab === "script-gen" ? "p-3" : activeTab === "shipment" ? "p-3" : activeTab === "van-don" ? "p-4" : "p-6")}>
-                    {activeTab === "ceo" && <TALPHACeoOverviewTab dateRange={dateRange} projectId="TALPHA" />}
-                    {activeTab === "marketing" && <TALPHAMarketingTab dateRange={dateRange} projectId="TALPHA" />}
-                    {activeTab === "products" && <TALPHAProductsTab dateRange={dateRange} projectId="TALPHA" />}
-                    {activeTab === "pnl" && <TALPHAPnLTab dateRange={dateRange} projectId="TALPHA" />}
-                    {activeTab === "customers" && <TALPHACustomerTab dateRange={dateRange} projectId="TALPHA" />}
-                    {activeTab === "market-intel" && <TALPHAMarketIntelTab dateRange={dateRange} projectId="TALPHA" />}
-                    {activeTab === "spy-board" && <SpyBoardTab />}
-                    {activeTab === "script-gen" && <ScriptGeneratorTab />}
-                    {activeTab === "shipment" && <ShipmentTab />}
-                    {activeTab === "van-don" && <VanDonTab />}
+                {/* Van Don */}
+                <div className="w-full p-4" style={{ display: activeTab === "van-don" ? "block" : "none" }}>
+                    <VanDonTab />
                 </div>
             </main>
         </div>
