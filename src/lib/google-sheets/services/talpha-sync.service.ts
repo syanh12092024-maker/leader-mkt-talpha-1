@@ -2,6 +2,7 @@ import { GoogleSpreadsheet } from "google-spreadsheet";
 import { JWT } from "google-auth-library";
 import path from "path";
 import fs from "fs";
+import { TAlphaAdsModel } from "../../bigquery/models/talpha-ads.model";
 
 function loadCredentials() {
     // Cloud: base64 env var
@@ -85,6 +86,44 @@ export class GoogleSheetsSyncService {
             return row;
         } catch (err: any) {
             console.error("Sheet Sync Error:", err.message);
+            throw err;
+        }
+    }
+
+    async syncMktReport(date: string, ads: any[], orders: any[]) {
+        try {
+            await this.doc.loadInfo();
+            const report = TAlphaAdsModel.aggregateByMktMarket(ads, orders);
+
+            for (const item of report) {
+                // Tab name: "MKT - MARKET"
+                const sheetTitle = `${item.marketer} - ${item.market}`;
+                let sheet = this.doc.sheetsByTitle[sheetTitle];
+                
+                if (!sheet) {
+                    // Create sheet if it doesn't exist
+                    sheet = await this.doc.addSheet({
+                        title: sheetTitle,
+                        headerValues: ["Ngày", "Tiền Tiêu", "Số Mess", "Giá Mess", "Đơn POS", "DT POS", "ROAS"]
+                    });
+                }
+
+                const pricePerMsg = item.messages > 0 ? Math.round(item.spend / item.messages) : 0;
+                const roas = item.spend > 0 ? (item.pos_revenue / item.spend).toFixed(2) : "0.00";
+
+                await sheet.addRow({
+                    "Ngày": date,
+                    "Tiền Tiêu": item.spend,
+                    "Số Mess": item.messages,
+                    "Giá Mess": pricePerMsg,
+                    "Đơn POS": item.pos_orders,
+                    "DT POS": item.pos_revenue,
+                    "ROAS": `${roas}x`
+                });
+            }
+            return true;
+        } catch (err: any) {
+            console.error("MKT Report Sync Error:", err.message);
             throw err;
         }
     }

@@ -62,10 +62,12 @@ export async function POST(req: NextRequest) {
         const result = TAlphaAdsModel.aggregate(ads, orders);
 
         const syncService = new GoogleSheetsSyncService(sheet_id);
-        const syncedData = await syncService.syncAdsData({
-            date,
-            ...result
-        });
+        
+        // Sync both general metrics and MKT-Market detailed breakdown
+        const [syncedData] = await Promise.all([
+            syncService.syncAdsData({ date, ...result }),
+            syncService.syncMktReport(date, ads, orders)
+        ]);
 
         return NextResponse.json({
             success: true,

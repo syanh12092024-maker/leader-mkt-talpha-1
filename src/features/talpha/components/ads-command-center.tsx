@@ -58,7 +58,6 @@ export default function AdsCommandCenter() {
     const [isPageOpen, setIsPageOpen] = useState(false);
     const [isTestOpen, setIsTestOpen] = useState(false);
     const [accountSearch, setAccountSearch] = useState("");
-    const [showReport, setShowReport] = useState(false);
     const [calendarMonth, setCalendarMonth] = useState(() => { const d = new Date(); return { year: d.getFullYear(), month: d.getMonth() }; });
     const accountRef = useRef<HTMLDivElement>(null);
     const dateRef = useRef<HTMLDivElement>(null);
@@ -426,38 +425,6 @@ export default function AdsCommandCenter() {
         ? { ...d, pos_orders: posFromTable.pos_orders, pos_revenue: posFromTable.pos_revenue, pos_roas: posFromTable.pos_roas }
         : d;
 
-    // ═══ MKT REPORT: Aggregate by marketer + market ═══
-    const mktReport = useMemo(() => {
-        if (!filteredAds.length && !data?.orders?.length) return [];
-        const map: Record<string, {
-            marketer: string; market: string;
-            spend: number; messages: number; purchases: number;
-            conversion_value: number; comments: number;
-            pos_orders: number; pos_revenue: number;
-            impressions: number; reach: number;
-        }> = {};
-
-        // From ads (campaigns)
-        filteredAds.forEach((ad: any) => {
-            const info = parseCampaign(ad.campaign_name);
-            const mkt = info.marketerDisplay || 'N/A';
-            const market = info.country || 'N/A';
-            const key = `${removeDiacritics(mkt.toUpperCase())}__${market}`;
-            if (!map[key]) map[key] = { marketer: mkt, market, spend: 0, messages: 0, purchases: 0, conversion_value: 0, comments: 0, pos_orders: 0, pos_revenue: 0, impressions: 0, reach: 0 };
-            map[key].spend += ad.spend || 0;
-            map[key].messages += ad.messages || 0;
-            map[key].purchases += ad.purchases || 0;
-            map[key].conversion_value += ad.conversion_value || 0;
-            map[key].comments += ad.comments || 0;
-            map[key].pos_orders += ad.orders || 0;
-            map[key].pos_revenue += ad.revenue_vnd || 0;
-            map[key].impressions += ad.impressions || 0;
-            map[key].reach += ad.reach || 0;
-        });
-
-        return Object.values(map).sort((a, b) => b.spend - a.spend);
-    }, [filteredAds, data]);
-
     const syncToSheet = async () => {
         if (!data) return;
         setSyncing(true);
@@ -630,12 +597,6 @@ export default function AdsCommandCenter() {
                     <button onClick={fetchData} disabled={loading}
                         className="p-1.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg text-slate-600 transition">
                         <RotateCw className={cn("w-3.5 h-3.5", loading && "animate-spin")} />
-                    </button>
-                    <button onClick={() => setShowReport(!showReport)}
-                        className={cn("flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[10px] font-bold transition",
-                            showReport ? "bg-indigo-600 text-white" : "bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200")}>
-                        <BarChart3 className="w-3 h-3" />
-                        Báo cáo
                     </button>
                     <button onClick={syncToSheet} disabled={syncing || !data}
                         className="flex items-center gap-1 bg-red-500 hover:bg-red-600 text-white rounded-lg px-2.5 py-1.5 text-[10px] font-bold transition disabled:opacity-50">
@@ -841,87 +802,8 @@ export default function AdsCommandCenter() {
                 </div>
             )}
 
-            {/* ═══ MKT REPORT TABLE ═══ */}
-            {showReport && mktReport.length > 0 && (
-                <section className="bg-white rounded-xl shadow-sm border border-indigo-100 flex-1 min-h-0 flex flex-col overflow-hidden">
-                    <div className="px-4 py-2.5 border-b border-indigo-100 flex items-center justify-between flex-shrink-0 bg-gradient-to-r from-indigo-50 to-white">
-                        <h2 className="text-xs font-bold text-indigo-800 flex items-center gap-2">
-                            <BarChart3 className="w-3.5 h-3.5 text-indigo-500" /> Báo cáo tổng hợp theo MKT
-                            <span className="px-1.5 py-0.5 rounded-full bg-indigo-100 text-indigo-600 text-[9px] font-bold border border-indigo-200">
-                                {dateLabel} • {mktReport.length} dòng
-                            </span>
-                        </h2>
-                    </div>
-                    <div className="overflow-auto flex-1">
-                        <table className="w-full text-[11px]" style={{ minWidth: "900px" }}>
-                            <thead className="sticky top-0 z-10">
-                                <tr className="bg-indigo-600 text-white">
-                                    <th className="text-left pl-4 pr-2 py-2.5 text-[9px] font-extrabold uppercase tracking-wide">#</th>
-                                    <th className="text-left px-2 py-2.5 text-[9px] font-extrabold uppercase tracking-wide">MKT</th>
-                                    <th className="text-left px-2 py-2.5 text-[9px] font-extrabold uppercase tracking-wide">Thị trường</th>
-                                    <th className="text-right px-2 py-2.5 text-[9px] font-extrabold uppercase tracking-wide">Tiền tiêu</th>
-                                    <th className="text-right px-2 py-2.5 text-[9px] font-extrabold uppercase tracking-wide">Số Mess</th>
-                                    <th className="text-right px-2 py-2.5 text-[9px] font-extrabold uppercase tracking-wide">Giá Mess</th>
-                                    <th className="text-right px-2 py-2.5 text-[9px] font-extrabold uppercase tracking-wide">Đơn POS</th>
-                                    <th className="text-right px-2 py-2.5 text-[9px] font-extrabold uppercase tracking-wide">DT POS</th>
-                                    <th className="text-right px-2 py-2.5 text-[9px] font-extrabold uppercase tracking-wide">Giá Đơn</th>
-                                    <th className="text-right pr-4 pl-2 py-2.5 text-[9px] font-extrabold uppercase tracking-wide">ROAS</th>
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y divide-slate-50">
-                                {mktReport.map((r, idx) => {
-                                    const costPerMsg = r.messages > 0 ? r.spend / r.messages : 0;
-                                    const costPerOrder = r.pos_orders > 0 ? r.spend / r.pos_orders : 0;
-                                    const roas = r.spend > 0 ? r.pos_revenue / r.spend : 0;
-                                    return (
-                                        <tr key={idx} className="group hover:bg-indigo-50/40 transition-colors">
-                                            <td className="pl-4 pr-2 py-2 text-slate-400 font-mono text-[10px]">{idx + 1}</td>
-                                            <td className="px-2 py-2">
-                                                <span className="font-bold text-slate-800">{r.marketer}</span>
-                                            </td>
-                                            <td className="px-2 py-2">
-                                                <span className="px-1.5 py-0.5 rounded bg-amber-50 border border-amber-200 text-amber-700 text-[9px] font-bold">{r.market}</span>
-                                            </td>
-                                            <td className="px-2 py-2 text-right font-mono font-semibold text-slate-700">{formatVNDCompact(r.spend)}</td>
-                                            <td className="px-2 py-2 text-right font-mono text-blue-600 font-bold">{r.messages || '—'}</td>
-                                            <td className="px-2 py-2 text-right font-mono text-slate-500">{costPerMsg > 0 ? formatVNDCompact(costPerMsg) : '—'}</td>
-                                            <td className="px-2 py-2 text-right font-mono font-bold text-red-600">{r.pos_orders || '—'}</td>
-                                            <td className="px-2 py-2 text-right font-mono text-red-600">{r.pos_revenue > 0 ? formatVNDCompact(r.pos_revenue) : '—'}</td>
-                                            <td className="px-2 py-2 text-right font-mono text-slate-500">{costPerOrder > 0 ? formatVNDCompact(costPerOrder) : '—'}</td>
-                                            <td className={cn("pr-4 pl-2 py-2 text-right font-mono font-bold",
-                                                roas >= 4 ? 'text-emerald-600' : roas >= 2 ? 'text-blue-600' : roas >= 1 ? 'text-amber-600' : 'text-red-500'
-                                            )}>{roas > 0 ? `${roas.toFixed(1)}x` : '—'}</td>
-                                        </tr>
-                                    );
-                                })}
-                            </tbody>
-                            <tfoot className="border-t-2 border-indigo-200">
-                                <tr className="bg-indigo-50/80 font-bold text-[11px]">
-                                    <td className="pl-4 pr-2 py-2.5" colSpan={3}>
-                                        <span className="text-indigo-700 text-[10px] font-bold">TỔNG CỘNG</span>
-                                    </td>
-                                    <td className="px-2 py-2.5 text-right font-mono text-slate-800">{formatVNDCompact(mktReport.reduce((s, r) => s + r.spend, 0))}</td>
-                                    <td className="px-2 py-2.5 text-right font-mono text-blue-700">{mktReport.reduce((s, r) => s + r.messages, 0)}</td>
-                                    <td className="px-2 py-2.5 text-right font-mono text-slate-600">
-                                        {(() => { const ts = mktReport.reduce((s, r) => s + r.spend, 0); const tm = mktReport.reduce((s, r) => s + r.messages, 0); return tm > 0 ? formatVNDCompact(ts / tm) : '—'; })()}
-                                    </td>
-                                    <td className="px-2 py-2.5 text-right font-mono text-red-700 font-black">{mktReport.reduce((s, r) => s + r.pos_orders, 0)}</td>
-                                    <td className="px-2 py-2.5 text-right font-mono text-red-700">{formatVNDCompact(mktReport.reduce((s, r) => s + r.pos_revenue, 0))}</td>
-                                    <td className="px-2 py-2.5 text-right font-mono text-slate-600">
-                                        {(() => { const ts = mktReport.reduce((s, r) => s + r.spend, 0); const to = mktReport.reduce((s, r) => s + r.pos_orders, 0); return to > 0 ? formatVNDCompact(ts / to) : '—'; })()}
-                                    </td>
-                                    <td className={cn("pr-4 pl-2 py-2.5 text-right font-mono font-bold", (() => { const ts = mktReport.reduce((s, r) => s + r.spend, 0); const tr2 = mktReport.reduce((s, r) => s + r.pos_revenue, 0); const roas = ts > 0 ? tr2 / ts : 0; return roas >= 4 ? 'text-emerald-600' : roas >= 2 ? 'text-blue-600' : 'text-amber-600'; })())}>
-                                        {(() => { const ts = mktReport.reduce((s, r) => s + r.spend, 0); const tr2 = mktReport.reduce((s, r) => s + r.pos_revenue, 0); return ts > 0 ? `${(tr2 / ts).toFixed(1)}x` : '—'; })()}
-                                    </td>
-                                </tr>
-                            </tfoot>
-                        </table>
-                    </div>
-                </section>
-            )}
-
             {/* ═══ CAMPAIGN TABLE ═══ */}
-            {!showReport && <section className="bg-white rounded-xl shadow-sm border border-slate-100 flex-1 min-h-0 flex flex-col overflow-hidden">
+            <section className="bg-white rounded-xl shadow-sm border border-slate-100 flex-1 min-h-0 flex flex-col overflow-hidden">
                 <div className="px-4 py-2.5 border-b border-slate-100 flex items-center justify-between flex-shrink-0">
                     <h2 className="text-xs font-bold text-slate-800 flex items-center gap-2">
                         <Activity className="w-3.5 h-3.5 text-blue-500" /> Chi tiết theo chiến dịch
@@ -1075,7 +957,7 @@ export default function AdsCommandCenter() {
                         </tfoot>
                         </table>
                 </div>
-            </section>}
+            </section>
         </div>
     );
 }

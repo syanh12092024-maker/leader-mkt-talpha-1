@@ -404,4 +404,58 @@ export class TAlphaAdsModel {
             pos_roas: parseFloat(posRoas.toFixed(2)),
         };
     }
+
+    static removeDiacritics(str: string) {
+        return str.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/gi, 'd');
+    }
+
+    static parseCampaign(campaignName: string) {
+        const parts = (campaignName || "").split("/").map(s => s.trim());
+        const lastPart = parts[parts.length - 1]?.toUpperCase();
+        return {
+            country: (parts[0] || "").toUpperCase(),
+            marketer: this.removeDiacritics((parts[1] || "").toUpperCase()),
+            marketerDisplay: parts[1] || "",
+            product: parts[2] || "",
+            pageId: parts[3] || "",
+            pageName: parts[4] || "",
+            isTest: lastPart === "TEST",
+        };
+    }
+
+    static aggregateByMktMarket(ads: any[], orders: any[]) {
+        const map: Record<string, {
+            marketer: string;
+            market: string;
+            spend: number;
+            messages: number;
+            purchases: number;
+            conversion_value: number;
+            pos_orders: number;
+            pos_revenue: number;
+        }> = {};
+
+        // 1. Group by Ads
+        ads.forEach(ad => {
+            const info = this.parseCampaign(ad.campaign_name);
+            const mkt = info.marketerDisplay || 'N/A';
+            const market = info.country || 'N/A';
+            const key = `${this.removeDiacritics(mkt.toUpperCase())}__${market}`;
+
+            if (!map[key]) {
+                map[key] = { marketer: mkt, market, spend: 0, messages: 0, purchases: 0, conversion_value: 0, pos_orders: 0, pos_revenue: 0 };
+            }
+            const r = map[key];
+            r.spend += ad.spend || 0;
+            r.messages += ad.messages || 0;
+            r.purchases += ad.purchases || 0;
+            r.conversion_value += ad.conversion_value || 0;
+            
+            // Note: ad.orders and ad.revenue_vnd are already mapped per-ad in TAlphaAdsModel.fetchMetaAds
+            r.pos_orders += ad.orders || 0;
+            r.pos_revenue += ad.revenue_vnd || 0;
+        });
+
+        return Object.values(map).sort((a, b) => b.spend - a.spend);
+    }
 }
