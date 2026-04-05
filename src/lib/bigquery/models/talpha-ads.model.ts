@@ -60,12 +60,14 @@ export class TAlphaAdsModel {
                 const json: any = await res.json();
 
                 if (json.error) {
-                    console.error("Meta API Error:", json.error.message);
+                    console.error("Meta API Error:", json.error.message, json.error.code);
                     break;
                 }
 
                 if (json.data) {
                     allData.push(...json.data);
+                } else {
+                    console.error("Meta API no data field:", JSON.stringify(json).slice(0, 200));
                 }
 
                 url = json.paging?.next || null;
@@ -137,6 +139,10 @@ export class TAlphaAdsModel {
                     this.fetchAllPages(campaignStatusUrl),
                     this.fetchAdCatalog(accId, access_token),
                 ]);
+                console.log(`[META] ${accId}: ${rows.length} ads, ${campaignRows.length} campaigns`);
+                if (rows.length === 0) {
+                    metaErrors.push(`${accId}: 0 ads returned (token might lack access)`);
+                }
                 // Merge catalog for this account
                 Object.assign(allCatalog, catalog);
 
