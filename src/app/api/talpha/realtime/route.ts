@@ -25,7 +25,7 @@ export async function GET(req: NextRequest) {
             });
         }
 
-        const { ads } = await TAlphaAdsModel.fetchMetaAds(fromDate, toDate);
+        const { ads, catalog, errors: metaErrors } = await TAlphaAdsModel.fetchMetaAds(fromDate, toDate);
         const orders = await TAlphaAdsModel.fetchPOSHybrid(fromDate, toDate);
         const result = TAlphaAdsModel.aggregate(ads, orders);
 
@@ -34,7 +34,8 @@ export async function GET(req: NextRequest) {
             ...result,
             date: fromDate,
             from_date: fromDate,
-            to_date: toDate
+            to_date: toDate,
+            _debug: { ads_raw: ads.length, meta_errors: metaErrors || [] }
         });
     } catch (error: any) {
         console.error("API ROUTE ERROR:", error);

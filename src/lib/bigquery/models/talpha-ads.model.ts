@@ -116,6 +116,7 @@ export class TAlphaAdsModel {
         const { access_token, ad_account_ids } = cfg.meta_ads;
         const allAds: any[] = [];
         const allCatalog: Record<string, { campaign_id: string; campaign_name: string; account_id: string }> = {};
+        const metaErrors: string[] = [];
         const timeRange = `&time_range=${encodeURIComponent(JSON.stringify({ since: fromDate, until: toDate }))}`;
 
         // Fields to request from Meta API
@@ -237,11 +238,13 @@ export class TAlphaAdsModel {
                         revenue_vnd: 0
                     });
                 });
-            } catch (e) {
-                console.error(`Meta Ads Error (${accId}):`, e);
+            } catch (e: any) {
+                const msg = `${accId}: ${e?.message || e}`;
+                console.error(`Meta Ads Error: ${msg}`);
+                metaErrors.push(msg);
             }
         }));
-        return { ads: allAds, catalog: allCatalog };
+        return { ads: allAds, catalog: allCatalog, errors: metaErrors };
     }
 
     static async fetchPOSHybrid(fromDate: string, toDate: string): Promise<TAlphaOrder[]> {
