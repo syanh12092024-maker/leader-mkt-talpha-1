@@ -869,10 +869,21 @@ export default function AdsCommandCenter() {
                                 </td></tr>
                             )}
                         </tbody>
-                        <tfoot className="border-t-2 border-slate-200">
-                            {/* ── FB ADS MANAGER STYLE TOTALS ROW ── */}
-                            {groupedCampaigns.length > 0 && (
-                                <tr className="bg-slate-50/80 font-bold text-[11px]">
+                        </table>
+                </div>
+                {/* ── STICKY BOTTOM TOTALS BAR ── */}
+                {groupedCampaigns.length > 0 && (
+                    <div className="sticky bottom-0 z-20 bg-slate-50/95 backdrop-blur-sm border-t-2 border-slate-300 shadow-[0_-4px_12px_rgba(0,0,0,0.08)]">
+                        <table className="w-full text-[11px]" style={{ minWidth: "1080px" }}>
+                            <colgroup>
+                                <col style={{ width: "20%" }} />
+                                <col style={{ width: "6%" }} />
+                                <col /><col /><col /><col />
+                                <col /><col /><col />
+                                <col /><col /><col />
+                            </colgroup>
+                            <tbody>
+                                <tr className="font-bold text-[11px]">
                                     <td className="pl-4 pr-2 py-2.5 border-r border-slate-200" colSpan={2}>
                                         <div className="text-slate-500 text-[10px] font-bold">
                                             Kết quả từ {groupedCampaigns.length} chiến dịch
@@ -907,10 +918,10 @@ export default function AdsCommandCenter() {
                                     <td className="px-1.5 py-2.5 text-right font-mono text-slate-500 whitespace-nowrap">{d.cost_per_message > 0 ? formatVNDCompact(d.cost_per_message) : "—"}</td>
                                     <td className="pr-4 pl-1.5 py-2.5 text-right font-mono text-slate-500">{d.comments || "—"}</td>
                                 </tr>
-                            )}
-                        </tfoot>
+                            </tbody>
                         </table>
-                </div>
+                    </div>
+                )}
             </section>
         </div>
     );
