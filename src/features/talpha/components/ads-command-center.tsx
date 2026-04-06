@@ -40,6 +40,7 @@ const ACCOUNT_NAMES: Record<string, string> = {
     // S.ANH
     "act_962218859667133": "S.ANH - 01 - ĐÔNG Á", "act_939548861921691": "S.ANH - 02 - ĐÔNG Á",
     "act_1249019484033894": "Sỹ Anh 02",
+    "act_1670165974333671": "Nhật Bản - 03",
 };
 const getAccountName = (id: string) => ACCOUNT_NAMES[id] || id;
 
