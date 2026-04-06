@@ -22,27 +22,36 @@ meta_ads:
   app_secret: "d056d01a049989e8cd8fe7f7cfe3178d"
   access_token: "EAAVNaaKhkpUBRMH40ZAndoGZAO3pYZBuU5vgQDHy74YZAePgbwnBKZBJ6PDZBmkh7ZCI2SZBHGe46DwzXtnH44N5TJZCizn8Y6nin3LinPncbsZCOf256qTdDKrHaUZAQHEyf6q7fCDgnQiHeIEXJFeUU0UIG8EwA8BsZCYoqSbdZAH0bFpZC2w9tCMEQ80IdZAh5ZCB"
   ad_account_ids:
-    - "act_1503790877534258"      # Tiểu Alpha 3
+    # ── Sỹ Lộc ──
     - "act_855567553811483"       # Sỹ Lộc 01
     - "act_934116652330312"       # Sỹ Lộc 02
     - "act_1284981146939856"      # Sỹ Lộc 03
-    - "act_1895495471105125"      # Sỹ Lộc 04
+    - "act_1614386202936215"      # Sỹ Lộc 04
+    # ── Chu Thuý ──
     - "act_833593695771745"       # Chu Thuý 01
     - "act_848995974322757"       # Chu Thuý 02
     - "act_1461543545434816"      # Chu Thuý 03
     - "act_1437142241537275"      # Chu Thuý 04
+    # ── Nhung ──
+    - "act_1223948656596727"      # Nhung LevelUp - 01
+    - "act_1670686890508970"      # Nhung 02
+    - "act_923574177322682"       # Nhung 03
+    # ── N.Thế ──
     - "act_1670240591020196"      # N.Thế 01
     - "act_946287684758283"       # N.Thế 02
     - "act_916423977810241"       # N.Thế 03
-    - "act_2126483347927326"      # Thục Mai 01
+    - "act_26411407608471378"     # N.Thế 04
+    - "act_1653063986109325"      # N.Thế 05
+    # ── Mạnh ──
+    - "act_1660923908668482"      # Mạnh 01
+    - "act_937483619152247"       # Mạnh 02
+    # ── Mai ──
     - "act_3534017756739334"      # Kuwait +3
     - "act_703242242813144"       # Trang Sức +1
-    - "act_917487764374311"       # Thục Bình 01
-    - "act_1338833310964388"      # Tk VND
-    - "act_1119368126847210"      # Trang sức 2 - Dubai
-    - "act_1223948656596727"      # Nhung LevelUp - 01
+    # ── S.ANH ──
     - "act_962218859667133"       # S.ANH - 01 - ĐÔNG Á
     - "act_939548861921691"       # S.ANH - 02 - ĐÔNG Á
+    - "act_1249019484033894"      # Sỹ Anh 02
   business_id: "1356322402694811"
   pixel_id: ""                    # ❌ CẦN BỔ SUNG (nếu có)
 
