@@ -98,6 +98,85 @@ export async function GET(req: NextRequest) {
         const getPages = searchParams.get("getPages") === "true";
         const pageFilter = searchParams.get("pageFilter") || "";
         const page = searchParams.get("page") || "1";
+        const debugCrm = searchParams.get("debugCrm") === "true";
+
+        // ═══ DEBUG CRM: Test Pancake API pagination directly ═══
+        if (debugCrm && pageFilter && config.pancake_crm?.api_token) {
+            const apiUrl = config.pancake_crm.api_url;
+            const token = config.pancake_crm.api_token;
+            const results: Array<{test: string; url: string; count: number; firstId?: string; lastId?: string; responseKeys: string[]}> = [];
+
+            // Test 1: Default (no pagination params)
+            const url1 = `${apiUrl}/pages/${pageFilter}/conversations?access_token=${token}&limit=500`;
+            const r1 = await fetch(url1);
+            const d1 = await r1.json();
+            const c1 = d1.conversations || [];
+            results.push({
+                test: "1: limit=500, no cursor",
+                url: url1.replace(token, '***'),
+                count: c1.length,
+                firstId: c1[0]?.id,
+                lastId: c1[c1.length - 1]?.id,
+                responseKeys: Object.keys(d1),
+            });
+
+            // Test 2: With last_conversation_id = last ID from test 1
+            if (c1.length > 0) {
+                const lastId = c1[c1.length - 1].id;
+                const url2 = `${apiUrl}/pages/${pageFilter}/conversations?access_token=${token}&limit=500&last_conversation_id=${lastId}`;
+                const r2 = await fetch(url2);
+                const d2 = await r2.json();
+                const c2 = d2.conversations || [];
+                // Check overlap
+                const firstIds1 = new Set(c1.slice(0, 10).map((c: {id: string}) => c.id));
+                const overlap = c2.filter((c: {id: string}) => firstIds1.has(c.id)).length;
+                results.push({
+                    test: `2: limit=500, last_conversation_id=${lastId}`,
+                    url: url2.replace(token, '***'),
+                    count: c2.length,
+                    firstId: c2[0]?.id,
+                    lastId: c2[c2.length - 1]?.id,
+                    responseKeys: Object.keys(d2),
+                    ...({overlapWithBatch1_first10: overlap} as Record<string, unknown>),
+                } as typeof results[0]);
+            }
+
+            // Test 3: limit=60 (Pancake default)
+            const url3 = `${apiUrl}/pages/${pageFilter}/conversations?access_token=${token}&limit=60`;
+            const r3 = await fetch(url3);
+            const d3 = await r3.json();
+            const c3 = d3.conversations || [];
+            results.push({
+                test: "3: limit=60, no cursor",
+                url: url3.replace(token, '***'),
+                count: c3.length,
+                firstId: c3[0]?.id,
+                lastId: c3[c3.length - 1]?.id,
+                responseKeys: Object.keys(d3),
+            });
+
+            // Test 4: limit=60 + last_conversation_id from test 3
+            if (c3.length > 0) {
+                const lastId3 = c3[c3.length - 1].id;
+                const url4 = `${apiUrl}/pages/${pageFilter}/conversations?access_token=${token}&limit=60&last_conversation_id=${lastId3}`;
+                const r4 = await fetch(url4);
+                const d4 = await r4.json();
+                const c4 = d4.conversations || [];
+                const ids3 = new Set(c3.map((c: {id: string}) => c.id));
+                const overlapCount = c4.filter((c: {id: string}) => ids3.has(c.id)).length;
+                results.push({
+                    test: `4: limit=60, last_conversation_id=${lastId3}`,
+                    url: url4.replace(token, '***'),
+                    count: c4.length,
+                    firstId: c4[0]?.id,
+                    lastId: c4[c4.length - 1]?.id,
+                    responseKeys: Object.keys(d4),
+                    ...({overlapWithBatch3: overlapCount, newUnique: c4.length - overlapCount} as Record<string, unknown>),
+                } as typeof results[0]);
+            }
+
+            return NextResponse.json({ debugCrm: true, pageId: pageFilter, results });
+        }
 
         if (!shopId) {
             // ─── getPages=true without shopId → fetch pages from ALL shops ───
@@ -242,7 +321,7 @@ async function fetchCRMConversations(
     pageId: string,
     _page: number
 ): Promise<object | null> {
-    const limit = 60; // ═══ Pancake CRM default batch size = 60 ═══
+    const limit = 500; // ═══ Will adjust based on debugCrm results ═══
     const allConversations: CRMConversation[] = [];
     const seenIds = new Set<string>();
     const maxIterations = 200; // Safety: 200 × 500 = 100,000 max
