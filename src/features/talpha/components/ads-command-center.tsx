@@ -873,7 +873,7 @@ export default function AdsCommandCenter() {
                 </div>
                 {/* ── FIXED BOTTOM TOTALS BAR ── */}
                 {groupedCampaigns.length > 0 && (
-                    <div className="flex-shrink-0 z-20 bg-slate-50 border-t-2 border-slate-300 shadow-[0_-4px_12px_rgba(0,0,0,0.08)] overflow-x-auto">
+                    <div className="fixed bottom-0 left-[240px] right-0 z-50 bg-slate-50 border-t-2 border-slate-300 shadow-[0_-4px_12px_rgba(0,0,0,0.1)] overflow-x-auto">
                         <table className="w-full text-[11px]" style={{ minWidth: "1080px" }}>
                             <colgroup>
                                 <col style={{ width: "20%" }} />
