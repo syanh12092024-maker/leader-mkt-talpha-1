@@ -235,7 +235,7 @@ export async function GET(req: NextRequest) {
 }
 
 // ─── CRM Conversations fetcher ───────────────────────────────────────────────
-// ═══ SMART PAGINATION: 3 strategies — page= → before= cursor → time-window ═══
+// ═══ Pancake CRM dùng cursor pagination: last_conversation_id ═══
 async function fetchCRMConversations(
     apiUrl: string,
     token: string,
@@ -245,70 +245,28 @@ async function fetchCRMConversations(
     const limit = 500;
     const allConversations: CRMConversation[] = [];
     const seenIds = new Set<string>();
-    let emptyStreak = 0;
-    const maxEmptyPages = 2;
-    const maxIterations = 100;
+    const maxIterations = 200; // Safety: 200 × 500 = 100,000 max
     let crmApiError: string | null = null;
     let iteration = 0;
+    let lastConversationId: string | null = null; // ═══ CURSOR: Pancake CRM pagination ═══
+    let consecutiveEmpty = 0;
 
-    // ═══ Strategy tracking ═══
-    type Strategy = 'PAGE' | 'CURSOR_BEFORE' | 'TIME_WINDOW';
-    let strategy: Strategy = 'PAGE';
-    let currentPage = 1;
-    let lastBatchLastId: string | null = null;
-    let timeWindowCutoff: string | null = null; // ISO timestamp for time-window strategy
-    let paginationDebug: Record<string, unknown> = {};
-
-    while (emptyStreak < maxEmptyPages && iteration < maxIterations) {
+    while (iteration < maxIterations && consecutiveEmpty < 2) {
         iteration++;
 
-        // ═══ BUILD URL based on current strategy ═══
-        let url: string;
-        switch (strategy) {
-            case 'CURSOR_BEFORE':
-                url = `${apiUrl}/pages/${pageId}/conversations?access_token=${token}&limit=${limit}&before=${lastBatchLastId}`;
-                break;
-            case 'TIME_WINDOW':
-                // Lấy conversations cũ hơn thời điểm cutoff
-                url = `${apiUrl}/pages/${pageId}/conversations?access_token=${token}&limit=${limit}&updated_at_max=${encodeURIComponent(timeWindowCutoff!)}`;
-                break;
-            default:
-                url = `${apiUrl}/pages/${pageId}/conversations?access_token=${token}&limit=${limit}&page=${currentPage}`;
+        // ═══ BUILD URL: first call = no cursor, subsequent = last_conversation_id ═══
+        let url = `${apiUrl}/pages/${pageId}/conversations?access_token=${token}&limit=${limit}`;
+        if (lastConversationId) {
+            url += `&last_conversation_id=${lastConversationId}`;
         }
         
         try {
             const res = await fetch(url);
             const data = await res.json();
 
-            // ═══ LOG RESPONSE STRUCTURE on first call — reveal pagination metadata ═══
-            if (iteration <= 2) {
-                const responseKeys = Object.keys(data);
-                const meta: Record<string, unknown> = {};
-                for (const key of responseKeys) {
-                    if (key === 'conversations') {
-                        meta[key] = `[Array: ${(data[key] || []).length} items]`;
-                    } else {
-                        meta[key] = data[key];
-                    }
-                }
-                console.log(`[broadcast] CRM RESPONSE STRUCTURE iter=${iteration}:`, JSON.stringify(meta));
-                if (iteration === 1) paginationDebug = meta;
-            }
-
             if (data.error_code) {
                 crmApiError = `[${data.error_code}] ${data.message || 'Unknown CRM error'}`;
-                console.error(`[broadcast] CRM Error: ${crmApiError} | strategy=${strategy}`);
-                
-                // Nếu strategy thất bại → thử strategy tiếp
-                if (strategy === 'CURSOR_BEFORE') {
-                    console.log(`[broadcast] CURSOR_BEFORE failed → trying TIME_WINDOW`);
-                    strategy = 'TIME_WINDOW';
-                    if (allConversations.length > 0) {
-                        const oldest = allConversations[allConversations.length - 1];
-                        timeWindowCutoff = oldest.updated_at || oldest.inserted_at;
-                    }
-                    continue;
-                }
+                console.error(`[broadcast] CRM Error: ${crmApiError}`);
                 if (allConversations.length === 0) return null;
                 break;
             }
@@ -316,15 +274,13 @@ async function fetchCRMConversations(
             const conversations: CRMConversation[] = data.conversations || [];
             
             if (conversations.length === 0) {
-                emptyStreak++;
-                if (strategy === 'PAGE') currentPage++;
-                continue;
+                console.log(`[broadcast] CRM iter=${iteration}: empty response → done | total=${allConversations.length}`);
+                consecutiveEmpty++;
+                break;
             }
             
-            // ═══ DEDUP + track ═══
+            // ═══ DEDUP + collect ═══
             let newCount = 0;
-            let batchLastId: string | null = null;
-            let batchOldestUpdatedAt: string | null = null;
             for (const c of conversations) {
                 const cId = String(c.id || '');
                 if (cId && !seenIds.has(cId)) {
@@ -332,60 +288,35 @@ async function fetchCRMConversations(
                     allConversations.push(c);
                     newCount++;
                 }
-                batchLastId = cId;
-                // Track oldest updated_at in this batch
-                const cUpdated = c.updated_at || c.inserted_at || '';
-                if (!batchOldestUpdatedAt || cUpdated < batchOldestUpdatedAt) {
-                    batchOldestUpdatedAt = cUpdated;
-                }
             }
 
-            console.log(`[broadcast] CRM [${strategy}] iter=${iteration}: ${conversations.length} returned, ${newCount} new | total=${allConversations.length}`);
+            // ═══ UPDATE CURSOR: ID of the last conversation in this batch ═══
+            const batchLastConvo = conversations[conversations.length - 1];
+            const newCursor = String(batchLastConvo?.id || '');
 
-            // ═══ HANDLE DUPLICATES: escalate to next strategy ═══
-            if (newCount === 0) {
-                if (strategy === 'PAGE' && allConversations.length > 0) {
-                    // Page= failed → try before= cursor
-                    console.log(`[broadcast] PAGE returned dups → switching to CURSOR_BEFORE`);
-                    strategy = 'CURSOR_BEFORE';
-                    continue;
-                } else if (strategy === 'CURSOR_BEFORE' && allConversations.length > 0) {
-                    // before= cursor failed → try time-window
-                    console.log(`[broadcast] CURSOR_BEFORE returned dups → switching to TIME_WINDOW`);
-                    strategy = 'TIME_WINDOW';
-                    const oldest = allConversations[allConversations.length - 1];
-                    timeWindowCutoff = oldest.updated_at || oldest.inserted_at;
-                    continue;
-                } else {
-                    // All strategies exhausted
-                    console.log(`[broadcast] All strategies exhausted → data capped at ${allConversations.length}`);
-                    break;
-                }
+            console.log(`[broadcast] CRM iter=${iteration}: ${conversations.length} returned, ${newCount} new | total=${allConversations.length} | cursor=${newCursor}`);
+
+            // Nếu cursor không đổi hoặc 100% duplicate → hết data
+            if (newCount === 0 || newCursor === lastConversationId) {
+                console.log(`[broadcast] CRM: no new data or cursor unchanged → done at total=${allConversations.length}`);
+                break;
             }
 
-            // Update cursors for next iteration
-            if (batchLastId) lastBatchLastId = batchLastId;
-            if (batchOldestUpdatedAt && strategy === 'TIME_WINDOW') {
-                // Shift window: next batch gets conversations older than this
-                timeWindowCutoff = batchOldestUpdatedAt;
-            }
+            lastConversationId = newCursor;
             
-            // Nếu API trả ít hơn limit → đã hết data
+            // Nếu API trả ít hơn limit → batch cuối
             if (conversations.length < limit) {
-                console.log(`[broadcast] CRM: ${conversations.length} < limit ${limit} → last batch | total=${allConversations.length}`);
+                console.log(`[broadcast] CRM: ${conversations.length} < ${limit} → last batch | total=${allConversations.length}`);
                 break;
             }
             
-            emptyStreak = 0;
-            if (strategy === 'PAGE') currentPage++;
         } catch (err) {
-            console.error(`[broadcast] CRM fetch error [${strategy}] iter=${iteration}:`, err);
-            emptyStreak++;
-            if (strategy === 'PAGE') currentPage++;
+            console.error(`[broadcast] CRM fetch error iter=${iteration}:`, err);
+            consecutiveEmpty++;
         }
     }
 
-    console.log(`[broadcast] CRM FINAL: ${allConversations.length} unique conversations in ${iteration} iters (strategy=${strategy}) for pageId=${pageId}`);
+    console.log(`[broadcast] CRM DONE: ${allConversations.length} conversations in ${iteration} iterations for pageId=${pageId}`);
 
     // ═══ FILTER: chỉ giữ conversations thuộc đúng page_id ═══
     // Pancake CRM có thể trả conversations từ nhiều pages (token-level access)
@@ -477,8 +408,8 @@ async function fetchCRMConversations(
             requestedPageId: pageId,
             pageIdBreakdown: Object.fromEntries(uniquePageIds),
             iterations: iteration,
-            finalStrategy: strategy,
-            paginationResponse: paginationDebug,
+            paginationMethod: "last_conversation_id",
+            lastCursor: lastConversationId,
         },
     };
 }
