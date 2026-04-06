@@ -327,6 +327,23 @@ async function fetchCRMConversations(
 
     console.log(`[broadcast] CRM after page_id filter: ${filteredConversations.length} (filtered from ${allConversations.length})`);
 
+    // ═══ RESOLVE TAG IDs → TAG NAMES ═══
+    // Fetch conversation tags for this page to map numeric IDs to names
+    let tagMap: Map<number, string> = new Map();
+    try {
+        const tagUrl = `${apiUrl}/pages/${pageId}/conversation_tags?access_token=${token}`;
+        const tagRes = await fetch(tagUrl);
+        const tagData = await tagRes.json();
+        if (tagData.conversation_tags) {
+            for (const t of tagData.conversation_tags) {
+                tagMap.set(Number(t.id), String(t.name || ''));
+            }
+            console.log(`[broadcast] CRM tags resolved: ${tagMap.size} tags for pageId=${pageId}`);
+        }
+    } catch (err) {
+        console.error(`[broadcast] CRM tag resolution failed:`, err);
+    }
+
     const allCustomers = filteredConversations
         .filter((c) => c && c.id && (c.from_psid || c.from?.id))
         .map((c) => {
@@ -340,6 +357,17 @@ async function fetchCRMConversations(
                     phone = (p as Record<string, string>).phone_number || (p as Record<string, string>).captured || String(p);
                 }
             }
+            // ═══ FIX: Nếu CRM has_phone = true nhưng phone rỗng → đặt placeholder ═══
+            // Điều này đảm bảo filter "chưa mua" sẽ loại đúng khách đã có SĐT
+            if (!phone && c.has_phone) {
+                phone = "has_phone";
+            }
+
+            // ═══ FIX: Resolve tag IDs → tag names ═══
+            const resolvedTags = (c.tags || []).map((t: number) => {
+                const name = tagMap.get(Number(t));
+                return name || String(t);
+            });
 
             return {
                 id: String(c.id || ""),
@@ -353,7 +381,7 @@ async function fetchCRMConversations(
                 orderCount: 0,
                 messageCount: Number(c.message_count) || 0,
                 snippet: String(c.snippet || "").replace(/[\r\n]+/g, " ").slice(0, 100),
-                tags: (c.tags || []).map((t: number) => String(t)),
+                tags: resolvedTags,
                 address: "",
                 updatedAt: String(c.updated_at || c.inserted_at || ""),
                 lastInteraction: String(c.last_customer_interactive_at || ""),

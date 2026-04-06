@@ -331,19 +331,32 @@ export default function BroadcastTab() {
         });
     };
 
+    // ─── Purchase tag detection ─────────────────────────────────────
+    // Tags liên quan đến đã mua/đã gửi hàng (check cả string và lowercase)
+    const PURCHASE_TAGS = ['đã gửi', 'đã nhận', 'da gui', 'da nhan', 'mua hàng', 'mua hang', 'đã mua', 'da mua', 'shipped', 'delivered', 'đã gửi hàng', 'đã chốt', 'da chot', 'chốt đơn', 'chot don'];
+    const hasPurchaseTag = (c: Customer): boolean => {
+        const tagStr = (c.tags || []).map(t => String(t).toLowerCase()).join(' ');
+        return PURCHASE_TAGS.some(pt => tagStr.includes(pt));
+    };
+    const isPurchasedCustomer = (c: Customer): boolean => {
+        return !!c.customerPhone || c.orderCount > 0 || hasPurchaseTag(c);
+    };
+
     // ─── Filter logic ─────────────────────────────────────────────
     const filteredCustomers = useMemo(() => {
-        if (!filterActive) return customers;
         let result = customers;
 
-        // Purchase filter
+        // ═══ LUÔN áp dụng purchase filter (không cần filterActive) ═══
         if (filterPurchase === 'no_purchase') {
-            // Chưa mua = không có SĐT VÀ orderCount = 0
-            result = result.filter(c => !c.customerPhone && c.orderCount === 0);
+            // Chưa mua = KHÔNG có SĐT VÀ orderCount = 0 VÀ KHÔNG có tag mua hàng
+            result = result.filter(c => !isPurchasedCustomer(c));
         } else if (filterPurchase === 'has_purchase') {
-            // Đã mua = có SĐT HOẶC có orderCount > 0
-            result = result.filter(c => c.customerPhone || c.orderCount > 0);
+            // Đã mua = có SĐT HOẶC có orderCount > 0 HOẶC có tag mua hàng
+            result = result.filter(c => isPurchasedCustomer(c));
         }
+
+        // Các filter khác chỉ áp dụng khi filterActive
+        if (!filterActive && filterPurchase === 'all') return customers;
 
         // Time range filter
         if (filterTimeRange !== 'all') {
@@ -389,7 +402,7 @@ export default function BroadcastTab() {
         const now = Date.now();
         const cutoff24h = now - 86400000;
         const ids = new Set(
-            customers
+            filteredCustomers
                 .filter(c => {
                     const t = new Date(c.lastInteraction || c.updatedAt).getTime();
                     return t >= cutoff24h;
@@ -400,10 +413,11 @@ export default function BroadcastTab() {
     };
 
     const toggleSelectAll = () => {
-        if (selectedIds.size === customers.length && customers.length > 0) {
+        // ═══ FIX: Select All chỉ chọn filteredCustomers, không phải tất cả ═══
+        if (selectedIds.size === filteredCustomers.length && filteredCustomers.length > 0) {
             setSelectedIds(new Set());
         } else {
-            setSelectedIds(new Set(customers.map((c) => c.id)));
+            setSelectedIds(new Set(filteredCustomers.map((c) => c.id)));
         }
     };
 
@@ -765,7 +779,8 @@ export default function BroadcastTab() {
         abortControllerRef.current = controller;
         const signal = controller.signal;
 
-        const allRecipients = customers
+        // ═══ FIX: Chỉ gửi cho filteredCustomers (đã loại khách mua hàng) ═══
+        const allRecipients = filteredCustomers
             .filter((c) => selectedIds.has(c.id))
             .map((c) => ({ psid: c.psid, pageFbId: c.pageFbId, name: c.customerName, conversationId: c.id }));
 
