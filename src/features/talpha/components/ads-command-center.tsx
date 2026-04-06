@@ -770,7 +770,21 @@ export default function AdsCommandCenter() {
                     <span className="text-[9px] text-slate-400 font-mono">{groupedCampaigns.length} chiến dịch</span>
                 </div>
                 <div className="overflow-auto flex-1">
-                    <table className="w-full text-[11px]" style={{ minWidth: "1080px" }}>
+                    <table className="w-full text-[11px] table-fixed" style={{ minWidth: "1080px" }}>
+                        <colgroup>
+                            <col style={{ width: "20%" }} />
+                            <col style={{ width: "6%" }} />
+                            <col style={{ width: "8%" }} />
+                            <col style={{ width: "6%" }} />
+                            <col style={{ width: "7%" }} />
+                            <col style={{ width: "11%" }} />
+                            <col style={{ width: "6%" }} />
+                            <col style={{ width: "8%" }} />
+                            <col style={{ width: "7%" }} />
+                            <col style={{ width: "7%" }} />
+                            <col style={{ width: "7%" }} />
+                            <col style={{ width: "7%" }} />
+                        </colgroup>
                         <thead className="sticky top-0 z-10">
                             {/* ══ GROUP HEADER ══ */}
                             <tr>
@@ -875,13 +889,20 @@ export default function AdsCommandCenter() {
                 {/* ── FIXED BOTTOM TOTALS BAR ── */}
                 {groupedCampaigns.length > 0 && (
                     <div className="fixed bottom-0 left-[256px] right-0 z-50 bg-white border-t-2 border-slate-300 shadow-[0_-4px_16px_rgba(0,0,0,0.12)] overflow-x-auto">
-                        <table className="w-full text-[11px]" style={{ minWidth: "1080px" }}>
+                        <table className="w-full text-[11px] table-fixed" style={{ minWidth: "1080px" }}>
                             <colgroup>
                                 <col style={{ width: "20%" }} />
                                 <col style={{ width: "6%" }} />
-                                <col /><col /><col /><col />
-                                <col /><col /><col />
-                                <col /><col /><col />
+                                <col style={{ width: "8%" }} />
+                                <col style={{ width: "6%" }} />
+                                <col style={{ width: "7%" }} />
+                                <col style={{ width: "11%" }} />
+                                <col style={{ width: "6%" }} />
+                                <col style={{ width: "8%" }} />
+                                <col style={{ width: "7%" }} />
+                                <col style={{ width: "7%" }} />
+                                <col style={{ width: "7%" }} />
+                                <col style={{ width: "7%" }} />
                             </colgroup>
                             <tbody>
                                 <tr className="font-bold text-[11px]">
