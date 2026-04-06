@@ -242,7 +242,7 @@ async function fetchCRMConversations(
     pageId: string,
     _page: number
 ): Promise<object | null> {
-    const limit = 500;
+    const limit = 60; // ═══ Pancake CRM default batch size = 60 ═══
     const allConversations: CRMConversation[] = [];
     const seenIds = new Set<string>();
     const maxIterations = 200; // Safety: 200 × 500 = 100,000 max
