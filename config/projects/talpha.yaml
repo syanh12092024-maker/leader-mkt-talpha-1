@@ -276,6 +276,10 @@ marketer_map:
     campaign_key: "BINH"
   - pos_name: "Lê Thục Bình"
     campaign_key: "BINH"
+  - pos_name: "Mạnh"
+    campaign_key: "MANH"
+  - pos_name: "MẠNH AK47"
+    campaign_key: "MANH"
 
 
 # ─── 10. SẢN PHẨM + GIÁ VỐN (valid_from: 2026-02-01) ───

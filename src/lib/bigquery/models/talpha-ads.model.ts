@@ -343,9 +343,14 @@ export class TAlphaAdsModel {
     }
 
     static aggregate(ads: any[], orders: TAlphaOrder[]) {
-        // ═══ RULE DUY NHẤT: Match POS orders by ad_id ═══
-        // Pancake gắn ad_id khi KH reply quảng cáo → tạo đơn POS
-        // Chỉ match khi order.ad_id trùng với ad.ad_id đang chạy
+        // Load marketer_map from config
+        const cfg = this.loadConfig();
+        const marketerMap: Record<string, string> = {};
+        (cfg.marketer_map || []).forEach((m: any) => {
+            marketerMap[this.normalizeName(m.pos_name)] = (m.campaign_key || '').toUpperCase();
+        });
+
+        // ═══ PASS 1: Match POS orders by ad_id (strict) ═══
         const adIdMap = new Map<string, number>();
         ads.forEach((ad, idx) => { if (ad.ad_id) adIdMap.set(String(ad.ad_id), idx); });
 
@@ -363,11 +368,55 @@ export class TAlphaAdsModel {
             }
         });
 
-        // Đơn không có ad_id hoặc ad_id không match → không gán (honest reporting)
+        // ═══ PASS 2: Match remaining orders by marketer name + market ═══
+        // For orders without ad_id (e.g. Japan POS), match by:
+        //   POS marketer name → campaign_key (from marketer_map)
+        //   POS shop_name → campaign market prefix (from MARKET_MAP)
         const unmatchedOrders = orders.filter(o => !matchedOrderIds.has(o.id));
         if (unmatchedOrders.length > 0) {
-            const unmatchedRevenue = unmatchedOrders.reduce((s, o) => s + o.total_price_vnd, 0);
-            console.log(`[POS] ${unmatchedOrders.length} orders unmatched (no ad_id) — revenue: ${unmatchedRevenue.toLocaleString()}đ`);
+            // Build campaign index: market/campaignKey → list of ad indices
+            const campaignIndex = new Map<string, number[]>();
+            ads.forEach((ad, idx) => {
+                const info = this.parseCampaign(ad.campaign_name);
+                const market = info.country; // e.g. "JAPAN"
+                const mktKey = this.removeDiacritics(info.marketerDisplay.toUpperCase()).trim();
+                if (market && mktKey) {
+                    const key = `${market}/${mktKey}`;
+                    if (!campaignIndex.has(key)) campaignIndex.set(key, []);
+                    campaignIndex.get(key)!.push(idx);
+                }
+            });
+
+            // Reverse MARKET_MAP: "Japan" → "JAPAN"
+            const shopToMarket: Record<string, string> = {};
+            Object.entries(this.MARKET_MAP).forEach(([k, v]) => { shopToMarket[v] = k; });
+
+            unmatchedOrders.forEach(order => {
+                const posMarketer = this.normalizeName(typeof order.marketer === 'string' ? order.marketer : '');
+                const campaignKey = marketerMap[posMarketer];
+                if (!campaignKey) return;
+
+                const market = shopToMarket[order.shop_name] || '';
+                if (!market) return;
+
+                const lookupKey = `${market}/${campaignKey}`;
+                const indices = campaignIndex.get(lookupKey);
+                if (indices && indices.length > 0) {
+                    // Distribute to the campaign with highest spend
+                    const bestIdx = indices.reduce((best, idx) =>
+                        ads[idx].spend > ads[best].spend ? idx : best, indices[0]);
+                    ads[bestIdx].orders += 1;
+                    ads[bestIdx].revenue_vnd += order.total_price_vnd;
+                    matchedOrderIds.add(order.id);
+                }
+            });
+        }
+
+        // Log remaining unmatched
+        const finalUnmatched = orders.filter(o => !matchedOrderIds.has(o.id));
+        if (finalUnmatched.length > 0) {
+            const unmatchedRevenue = finalUnmatched.reduce((s, o) => s + o.total_price_vnd, 0);
+            console.log(`[POS] ${finalUnmatched.length} orders unmatched — revenue: ${unmatchedRevenue.toLocaleString()}đ`);
         }
 
         // ═══ Aggregate totals ═══
