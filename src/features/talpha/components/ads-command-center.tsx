@@ -330,55 +330,10 @@ export default function AdsCommandCenter() {
                 comments: ads.reduce((s: number, a: any) => s + a.comments, 0),
                 pos_orders: ads.reduce((s: number, a: any) => s + (a.orders || 0), 0),
                 pos_revenue: ads.reduce((s: number, a: any) => s + (a.revenue_vnd || 0), 0),
-                _isPosOnly: false,
             };
-        });
-
-        // ═══ Virtual POS rows: hiển thị đơn POS chưa match khi ads rỗng hoặc unmatched ═══
-        if (data?.orders && data.orders.length > 0) {
-            // Collect matched order IDs from campaign rows
-            const matchedRevenue = campaignRows.reduce((s, c) => s + (c.pos_revenue || 0), 0);
-            const totalOrderRevenue = data.orders.reduce((s: number, o: any) => s + (o.total_price_vnd || 0), 0);
-            const hasUnmatched = totalOrderRevenue > matchedRevenue + 1; // tolerance 1đ
-
-            if (hasUnmatched || campaignRows.length === 0) {
-                // Group unmatched orders by shop_name (market)
-                const shopGroups: Record<string, { count: number; revenue: number; marketer: string }> = {};
-                data.orders.forEach((o: any) => {
-                    const shop = o.shop_name || 'Unknown';
-                    if (!shopGroups[shop]) shopGroups[shop] = { count: 0, revenue: 0, marketer: '' };
-                    shopGroups[shop].count++;
-                    shopGroups[shop].revenue += o.total_price_vnd || 0;
-                    if (o.marketer && o.marketer !== 'N/A') shopGroups[shop].marketer = o.marketer;
-                });
-
-                // Only create virtual rows for shops that aren't already fully represented
-                const matchedOrders = campaignRows.reduce((s, c) => s + (c.pos_orders || 0), 0);
-                if (data.orders.length > matchedOrders) {
-                    Object.entries(shopGroups).forEach(([shop, info]) => {
-                        campaignRows.push({
-                            account_id: '', campaign_id: `pos_${shop}`,
-                            campaign_name: `📦 POS — ${shop}`,
-                            effective_status: 'POS_ONLY',
-                            spend: 0, impressions: 0, reach: 0, messages: 0,
-                            purchases: 0, conversion_value: 0, comments: 0,
-                            pos_orders: info.count,
-                            pos_revenue: info.revenue,
-                            _isPosOnly: true,
-                        });
-                    });
-                }
-            }
-        }
-
-        return campaignRows.sort((a, b) => {
-            // Ads with spend first, then POS-only rows sorted by revenue
-            if (a.spend > 0 && b.spend === 0) return -1;
-            if (a.spend === 0 && b.spend > 0) return 1;
-            if (a.spend > 0 && b.spend > 0) return b.spend - a.spend;
-            return (b.pos_revenue || 0) - (a.pos_revenue || 0);
-        });
-    }, [filteredAds, data]);
+        }).sort((a, b) => b.spend - a.spend);
+        return campaignRows;
+    }, [filteredAds]);
 
     // ═══ posFromTable: Tính từ groupedCampaigns → luôn khớp với table ═══
     // Attribution logic: ad_id (Pass 1) + marketer name (Pass 1.5) đã xử lý ở model
@@ -390,7 +345,7 @@ export default function AdsCommandCenter() {
         return { pos_orders, pos_revenue, pos_roas: total_spend > 0 ? pos_revenue / total_spend : 0 };
     }, [groupedCampaigns]);
 
-    // posBreakdown: nhóm theo market — dùng data.orders trực tiếp nếu chỉ có POS rows
+    // posBreakdown: nhóm theo market từ groupedCampaigns
     const posBreakdown = useMemo(() => {
         const map: Record<string, { count: number; revenue: number }> = {};
         const MARKET_DISPLAY: Record<string, string> = {
@@ -399,27 +354,16 @@ export default function AdsCommandCenter() {
             "QATAR": "Qatar", "BAHRAIN": "Bahrain",
         };
 
-        const hasPosOnlyRows = groupedCampaigns.some((c: any) => c._isPosOnly);
-        if (hasPosOnlyRows && data?.orders) {
-            // Source from raw orders when we have virtual POS rows
-            data.orders.forEach((o: any) => {
-                const shop = o.shop_name || 'Unknown';
-                if (!map[shop]) map[shop] = { count: 0, revenue: 0 };
-                map[shop].count++;
-                map[shop].revenue += o.total_price_vnd || 0;
-            });
-        } else {
-            groupedCampaigns.forEach((c) => {
-                if (!c.pos_orders && !c.pos_revenue) return;
-                const prefix = (c.campaign_name || '').split('/')[0]?.trim().toUpperCase();
-                const market = MARKET_DISPLAY[prefix] || prefix;
-                if (!map[market]) map[market] = { count: 0, revenue: 0 };
-                map[market].count += c.pos_orders || 0;
-                map[market].revenue += c.pos_revenue || 0;
-            });
-        }
+        groupedCampaigns.forEach((c) => {
+            if (!c.pos_orders && !c.pos_revenue) return;
+            const prefix = (c.campaign_name || '').split('/')[0]?.trim().toUpperCase();
+            const market = MARKET_DISPLAY[prefix] || prefix;
+            if (!map[market]) map[market] = { count: 0, revenue: 0 };
+            map[market].count += c.pos_orders || 0;
+            map[market].revenue += c.pos_revenue || 0;
+        });
         return Object.entries(map).map(([name, v]) => ({ name, ...v })).sort((a, b) => b.revenue - a.revenue);
-    }, [groupedCampaigns, data]);
+    }, [groupedCampaigns]);
 
     const dFinal = hasActiveFilter
         ? { ...d, pos_orders: posFromTable.pos_orders, pos_revenue: posFromTable.pos_revenue, pos_roas: posFromTable.pos_roas }
@@ -876,19 +820,19 @@ export default function AdsCommandCenter() {
                                             <span className={cn("inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[8px] font-bold whitespace-nowrap",
                                                 c.effective_status === 'ACTIVE' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' :
                                                 c.effective_status === 'PAUSED' ? 'bg-slate-100 text-slate-500 border border-slate-200' :
-                                                c.effective_status === 'POS_ONLY' ? 'bg-amber-50 text-amber-700 border border-amber-200' :
+
                                                 'bg-red-50 text-red-500 border border-red-200'
                                             )}>
                                                 <span className={cn("w-1.5 h-1.5 rounded-full",
                                                     c.effective_status === 'ACTIVE' ? 'bg-emerald-500' :
                                                     c.effective_status === 'PAUSED' ? 'bg-slate-400' :
-                                                    c.effective_status === 'POS_ONLY' ? 'bg-amber-500' : 'bg-red-400'
+                                                    c.effective_status === 'PAUSED' ? 'bg-slate-400' : 'bg-red-400'
                                                 )} />
                                                 {c.effective_status === 'ACTIVE' ? 'Hoạt động' :
                                                  c.effective_status === 'PAUSED' ? 'Tạm dừng' :
                                                  c.effective_status === 'DELETED' ? 'Đã xóa' :
                                                  c.effective_status === 'ARCHIVED' ? 'Lưu trữ' :
-                                                 c.effective_status === 'POS_ONLY' ? 'Đơn POS' : c.effective_status}
+                                                 c.effective_status === 'ARCHIVED' ? 'Lưu trữ' : c.effective_status}
                                             </span>
                                         </td>
                                         {/* ── META ADS COLUMNS ── */}
