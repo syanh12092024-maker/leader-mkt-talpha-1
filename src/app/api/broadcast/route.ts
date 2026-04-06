@@ -241,19 +241,24 @@ async function fetchCRMConversations(
     pageId: string,
     _page: number
 ): Promise<object | null> {
-    const limit = 500; // ═══ MAX: fetch 500 per page ═══
+    const limit = 100; // ═══ Giảm từ 500 → 100 để Pancake CRM paginate đúng ═══
     const allConversations: CRMConversation[] = [];
     const seenIds = new Set<string>(); // ═══ DEDUP: track IDs đã thấy ═══
     let currentPage = 1;
     let emptyStreak = 0;
-    const maxEmptyPages = 5; // ═══ MAX: cho phép 5 empty pages trước khi stop ═══
-    const maxPages = 200; // ═══ MAX: 200 pages × 500 = 100,000 conversations ═══
+    const maxEmptyPages = 3;
+    const maxPages = 1000; // ═══ MAX: 1000 pages × 100 = 100,000 conversations ═══
     let crmApiError: string | null = null;
-    let consecutiveDupPages = 0; // Track consecutive all-duplicate pages
+    let consecutiveDupPages = 0;
+    let lastId: string | null = null; // ═══ Cursor cho after_id pagination ═══
 
     // Loop through pages, STOP when truly no more data
     while (emptyStreak < maxEmptyPages && currentPage <= maxPages) {
-        const url = `${apiUrl}/pages/${pageId}/conversations?access_token=${token}&limit=${limit}&page=${currentPage}`;
+        // ═══ Dùng cả page= VÀ after_id= để Pancake CRM paginate đúng ═══
+        let url = `${apiUrl}/pages/${pageId}/conversations?access_token=${token}&limit=${limit}&page=${currentPage}`;
+        if (lastId) {
+            url += `&after_id=${lastId}`;
+        }
         
         try {
             const res = await fetch(url);
@@ -285,25 +290,28 @@ async function fetchCRMConversations(
                     seenIds.add(cId);
                     allConversations.push(c);
                     newCount++;
+                    lastId = cId; // Update cursor to last conversation ID
                 }
             }
 
-            console.log(`[broadcast] CRM page ${currentPage}: ${conversations.length} returned, ${newCount} new, ${conversations.length - newCount} dups | total=${allConversations.length}`);
+            // Log mỗi 10 pages hoặc khi gần xong để giảm noise
+            if (currentPage <= 3 || currentPage % 10 === 0 || conversations.length < limit) {
+                console.log(`[broadcast] CRM page ${currentPage}: ${conversations.length} returned, ${newCount} new, ${conversations.length - newCount} dups | total=${allConversations.length}`);
+            }
 
             if (newCount === 0) {
                 consecutiveDupPages++;
-                // ═══ RELAXED: cần 5 consecutive all-duplicate pages mới stop ═══
-                if (consecutiveDupPages >= 5) {
-                    console.log(`[broadcast] CRM: ${consecutiveDupPages} consecutive all-duplicate pages → stopping`);
+                if (consecutiveDupPages >= 3) {
+                    console.log(`[broadcast] CRM: ${consecutiveDupPages} consecutive all-duplicate pages → stopping at total=${allConversations.length}`);
                     break;
                 }
             } else {
-                consecutiveDupPages = 0; // Reset khi có data mới
+                consecutiveDupPages = 0;
             }
             
             // Nếu API trả ít hơn limit → đã hết data
             if (conversations.length < limit) {
-                console.log(`[broadcast] CRM page ${currentPage}: returned ${conversations.length} < limit ${limit} → last page`);
+                console.log(`[broadcast] CRM page ${currentPage}: returned ${conversations.length} < limit ${limit} → last page | total=${allConversations.length}`);
                 break;
             }
             
@@ -316,7 +324,7 @@ async function fetchCRMConversations(
         }
     }
 
-    console.log(`[broadcast] CRM raw: ${allConversations.length} conversations across ${currentPage - 1} pages for pageId=${pageId}`);
+    console.log(`[broadcast] CRM TOTAL: ${allConversations.length} conversations across ${currentPage} pages for pageId=${pageId}`);
 
     // ═══ FILTER: chỉ giữ conversations thuộc đúng page_id ═══
     // Pancake CRM có thể trả conversations từ nhiều pages (token-level access)

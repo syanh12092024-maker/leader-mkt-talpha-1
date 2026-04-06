@@ -1031,7 +1031,7 @@ export default function BroadcastTab() {
                     )}
                     <div className="rounded-xl bg-violet-50 border border-violet-200 px-3 py-2.5 text-sm whitespace-nowrap">
                         <span className="font-semibold text-violet-700">{selectedIds.size}</span>
-                        <span className="text-violet-500">/{filterActive ? filteredCustomers.length : totalCustomers} chọn</span>
+                        <span className="text-violet-500">/{filteredCustomers.length} chọn</span>
                     </div>
                 </div>
             </div>
@@ -1181,7 +1181,7 @@ export default function BroadcastTab() {
                 {filteredCustomers.length > 0 && (
                     <div className="flex items-center justify-center px-4 py-2 bg-slate-50 border-t border-slate-100">
                         <span className="text-xs text-slate-400">
-                            Hiển thị: {filteredCustomers.length} · Tổng: {totalCustomers} khách · Đã chọn: {selectedIds.size}
+                            Hiển thị: {Math.min(visibleCount, filteredCustomers.length)} · Lọc: {filteredCustomers.length} · Tổng CRM: {totalCustomers} khách · Đã chọn: {selectedIds.size}
                         </span>
                     </div>
                 )}
