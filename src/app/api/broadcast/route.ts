@@ -100,82 +100,185 @@ export async function GET(req: NextRequest) {
         const page = searchParams.get("page") || "1";
         const debugCrm = searchParams.get("debugCrm") === "true";
 
-        // ═══ DEBUG CRM: Test Pancake API pagination directly ═══
+        // ═══ DEBUG CRM: Comprehensive Pancake API param testing ═══
         if (debugCrm && pageFilter && config.pancake_crm?.api_token) {
             const apiUrl = config.pancake_crm.api_url;
             const token = config.pancake_crm.api_token;
-            const results: Array<{test: string; url: string; count: number; firstId?: string; lastId?: string; responseKeys: string[]}> = [];
+            const results: Array<Record<string, unknown>> = [];
+            const mask = (u: string) => u.replace(token, '***');
 
-            // Test 1: Default (no pagination params)
+            // --- Test 1: Default fetch (baseline) ---
             const url1 = `${apiUrl}/pages/${pageFilter}/conversations?access_token=${token}&limit=500`;
             const r1 = await fetch(url1);
             const d1 = await r1.json();
-            const c1 = d1.conversations || [];
+            const c1: CRMConversation[] = d1.conversations || [];
+            const allIds1 = new Set(c1.map(c => c.id));
             results.push({
-                test: "1: limit=500, no cursor",
-                url: url1.replace(token, '***'),
+                test: "1: baseline limit=500",
+                url: mask(url1),
                 count: c1.length,
                 firstId: c1[0]?.id,
                 lastId: c1[c1.length - 1]?.id,
                 responseKeys: Object.keys(d1),
+                sampleFields: c1[0] ? Object.keys(c1[0]) : [],
             });
 
-            // Test 2: With last_conversation_id = last ID from test 1
+            // --- Test 2: Cursor pagination with last_conversation_id ---
             if (c1.length > 0) {
                 const lastId = c1[c1.length - 1].id;
                 const url2 = `${apiUrl}/pages/${pageFilter}/conversations?access_token=${token}&limit=500&last_conversation_id=${lastId}`;
                 const r2 = await fetch(url2);
                 const d2 = await r2.json();
-                const c2 = d2.conversations || [];
-                // Check overlap
-                const firstIds1 = new Set(c1.slice(0, 10).map((c: {id: string}) => c.id));
-                const overlap = c2.filter((c: {id: string}) => firstIds1.has(c.id)).length;
+                const c2: CRMConversation[] = d2.conversations || [];
+                const overlap = c2.filter(c => allIds1.has(c.id)).length;
+                const newUnique = c2.length - overlap;
                 results.push({
-                    test: `2: limit=500, last_conversation_id=${lastId}`,
-                    url: url2.replace(token, '***'),
+                    test: `2: cursor last_conversation_id=${lastId}`,
+                    url: mask(url2),
                     count: c2.length,
-                    firstId: c2[0]?.id,
-                    lastId: c2[c2.length - 1]?.id,
-                    responseKeys: Object.keys(d2),
-                    ...({overlapWithBatch1_first10: overlap} as Record<string, unknown>),
-                } as typeof results[0]);
+                    overlap,
+                    newUnique,
+                    cursorWorks: newUnique > 0,
+                });
             }
 
-            // Test 3: limit=60 (Pancake default)
-            const url3 = `${apiUrl}/pages/${pageFilter}/conversations?access_token=${token}&limit=60`;
-            const r3 = await fetch(url3);
-            const d3 = await r3.json();
-            const c3 = d3.conversations || [];
+            // --- Test 3: Fetch conversation tags → test per-tag filtering ---
+            let tagList: Array<{id: number; name: string}> = [];
+            try {
+                const tagUrl = `${apiUrl}/pages/${pageFilter}/conversation_tags?access_token=${token}`;
+                const tagRes = await fetch(tagUrl);
+                const tagData = await tagRes.json();
+                tagList = (tagData.conversation_tags || []).map((t: {id: number; name: string}) => ({
+                    id: Number(t.id),
+                    name: String(t.name || ''),
+                }));
+                results.push({
+                    test: "3: available tags",
+                    totalTags: tagList.length,
+                    tags: tagList.map(t => `[${t.id}] ${t.name}`),
+                });
+            } catch (err) {
+                results.push({ test: "3: tags fetch failed", error: String(err) });
+            }
+
+            // --- Test 4: Filter by tag_id (test first 3 tags) ---
+            for (const tag of tagList.slice(0, 3)) {
+                const urlTag = `${apiUrl}/pages/${pageFilter}/conversations?access_token=${token}&limit=500&tag_id=${tag.id}`;
+                try {
+                    const rTag = await fetch(urlTag);
+                    const dTag = await rTag.json();
+                    const cTag: CRMConversation[] = dTag.conversations || [];
+                    const newFromTag = cTag.filter(c => !allIds1.has(c.id)).length;
+                    results.push({
+                        test: `4: tag_id=${tag.id} (${tag.name})`,
+                        url: mask(urlTag),
+                        count: cTag.length,
+                        newVsBaseline: newFromTag,
+                        tagFilterWorks: !dTag.error_code,
+                    });
+                } catch (err) {
+                    results.push({ test: `4: tag_id=${tag.id} failed`, error: String(err) });
+                }
+            }
+
+            // --- Test 5: Filter by type (inbox vs comment vs ...) ---
+            for (const type of ["inbox", "comment", "livechat"]) {
+                const urlType = `${apiUrl}/pages/${pageFilter}/conversations?access_token=${token}&limit=500&type=${type}`;
+                try {
+                    const rType = await fetch(urlType);
+                    const dType = await rType.json();
+                    const cType: CRMConversation[] = dType.conversations || [];
+                    const newFromType = cType.filter(c => !allIds1.has(c.id)).length;
+                    results.push({
+                        test: `5: type=${type}`,
+                        url: mask(urlType),
+                        count: cType.length,
+                        newVsBaseline: newFromType,
+                        typeFilterWorks: !dType.error_code,
+                    });
+                } catch (err) {
+                    results.push({ test: `5: type=${type} failed`, error: String(err) });
+                }
+            }
+
+            // --- Test 6: Filter by is_read status ---
+            for (const isRead of ["true", "false"]) {
+                const urlRead = `${apiUrl}/pages/${pageFilter}/conversations?access_token=${token}&limit=500&is_read=${isRead}`;
+                try {
+                    const rRead = await fetch(urlRead);
+                    const dRead = await rRead.json();
+                    const cRead: CRMConversation[] = dRead.conversations || [];
+                    results.push({
+                        test: `6: is_read=${isRead}`,
+                        url: mask(urlRead),
+                        count: cRead.length,
+                        filterWorks: !dRead.error_code,
+                    });
+                } catch (err) {
+                    results.push({ test: `6: is_read=${isRead} failed`, error: String(err) });
+                }
+            }
+
+            // --- Test 7: Search param ---
+            const urlSearch = `${apiUrl}/pages/${pageFilter}/conversations?access_token=${token}&limit=500&search=a`;
+            try {
+                const rSearch = await fetch(urlSearch);
+                const dSearch = await rSearch.json();
+                const cSearch: CRMConversation[] = dSearch.conversations || [];
+                results.push({
+                    test: "7: search=a",
+                    url: mask(urlSearch),
+                    count: cSearch.length,
+                    searchWorks: !dSearch.error_code,
+                });
+            } catch (err) {
+                results.push({ test: "7: search failed", error: String(err) });
+            }
+
+            // --- Test 8: Sort order (oldest first) ---
+            const urlSort = `${apiUrl}/pages/${pageFilter}/conversations?access_token=${token}&limit=500&sort=asc`;
+            try {
+                const rSort = await fetch(urlSort);
+                const dSort = await rSort.json();
+                const cSort: CRMConversation[] = dSort.conversations || [];
+                const newFromSort = cSort.filter(c => !allIds1.has(c.id)).length;
+                results.push({
+                    test: "8: sort=asc (oldest first)",
+                    url: mask(urlSort),
+                    count: cSort.length,
+                    newVsBaseline: newFromSort,
+                    sortWorks: cSort.length > 0 && !dSort.error_code,
+                });
+            } catch (err) {
+                results.push({ test: "8: sort=asc failed", error: String(err) });
+            }
+
+            // --- POS: Count how many POS customers exist for comparison ---
+            let posCount = 0;
+            try {
+                const shop = config.poscake.shops[0];
+                if (shop) {
+                    const posUrl = `${config.poscake.api_url}/shops/${shop.shop_id}/customers?api_key=${shop.api_key}&page=1&page_size=1`;
+                    const posRes = await fetch(posUrl);
+                    const posData = await posRes.json();
+                    posCount = posData.total_count || posData.total || (posData.data || []).length;
+                }
+            } catch { /* ignore */ }
+
             results.push({
-                test: "3: limit=60, no cursor",
-                url: url3.replace(token, '***'),
-                count: c3.length,
-                firstId: c3[0]?.id,
-                lastId: c3[c3.length - 1]?.id,
-                responseKeys: Object.keys(d3),
+                test: "9: POS total customers (for reference)",
+                posCustomerCount: posCount,
             });
 
-            // Test 4: limit=60 + last_conversation_id from test 3
-            if (c3.length > 0) {
-                const lastId3 = c3[c3.length - 1].id;
-                const url4 = `${apiUrl}/pages/${pageFilter}/conversations?access_token=${token}&limit=60&last_conversation_id=${lastId3}`;
-                const r4 = await fetch(url4);
-                const d4 = await r4.json();
-                const c4 = d4.conversations || [];
-                const ids3 = new Set(c3.map((c: {id: string}) => c.id));
-                const overlapCount = c4.filter((c: {id: string}) => ids3.has(c.id)).length;
-                results.push({
-                    test: `4: limit=60, last_conversation_id=${lastId3}`,
-                    url: url4.replace(token, '***'),
-                    count: c4.length,
-                    firstId: c4[0]?.id,
-                    lastId: c4[c4.length - 1]?.id,
-                    responseKeys: Object.keys(d4),
-                    ...({overlapWithBatch3: overlapCount, newUnique: c4.length - overlapCount} as Record<string, unknown>),
-                } as typeof results[0]);
-            }
-
-            return NextResponse.json({ debugCrm: true, pageId: pageFilter, results });
+            return NextResponse.json({
+                debugCrm: true,
+                pageId: pageFilter,
+                crmBaseline: c1.length,
+                results,
+                recommendation: c1.length >= 500
+                    ? "CRM is at 500 cap. Check which filters return newVsBaseline > 0 to find strategies for fetching beyond 500."
+                    : `CRM returned ${c1.length} (under 500 cap). All data may already be fetched.`,
+            });
         }
 
         if (!shopId) {
@@ -277,27 +380,101 @@ export async function GET(req: NextRequest) {
         }
 
         // ─── Primary: CRM Conversations (ALL who messaged) ────────────────
+        // ─── Enhanced: CRM + POS merge for maximum coverage ──────────────
         let crmError: string | null = null;
+        let crmResult: Record<string, unknown> | null = null;
+
         if (pageFilter && config.pancake_crm?.api_token) {
             try {
-                const crmData = await fetchCRMConversations(
+                crmResult = await fetchCRMConversations(
                     config.pancake_crm.api_url,
                     config.pancake_crm.api_token,
                     pageFilter,
                     Number(page)
-                );
-                if (crmData) return NextResponse.json(crmData);
-                // CRM returned null = error occurred
-                crmError = `CRM không trả data cho page ${pageFilter}. Có thể cần đăng nhập lại Pancake.`;
+                ) as Record<string, unknown> | null;
+                if (!crmResult) {
+                    crmError = `CRM không trả data cho page ${pageFilter}. Có thể cần đăng nhập lại Pancake.`;
+                }
             } catch (err) {
-                console.error("[broadcast] CRM fallback to POS:", err);
+                console.error("[broadcast] CRM error:", err);
                 crmError = `CRM lỗi: ${err instanceof Error ? err.message : String(err)}`;
             }
         }
 
-        // ─── Fallback: POS Customers (only buyers) ────────────────────────
+        // ─── Merge CRM + POS: bổ sung POS customers mà CRM không có ─────
+        if (crmResult) {
+            const crmCustomers = (crmResult.customers || []) as Array<Record<string, unknown>>;
+            const crmPsids = new Set(crmCustomers.map(c => String(c.psid || '')).filter(Boolean));
+            const crmPhones = new Set(crmCustomers.map(c => String(c.customerPhone || '')).filter(p => p && p !== 'has_phone'));
+            const crmNames = new Set(crmCustomers.map(c => String(c.customerName || '').toLowerCase()).filter(Boolean));
+
+            // Fetch POS data to supplement
+            let posExtra: Array<Record<string, unknown>> = [];
+            try {
+                const posResponse = await fetchPOSCustomers(config, shop, page, pageFilter);
+                const posData = await posResponse.json();
+                const posCustomers = (posData.customers || []) as Array<Record<string, unknown>>;
+
+                // Enrich CRM customers with POS data (orderCount, address)
+                for (const crm of crmCustomers) {
+                    const crmPhone = String(crm.customerPhone || '');
+                    const crmName = String(crm.customerName || '').toLowerCase();
+                    const matchedPos = posCustomers.find(pos => {
+                        const posPhone = String(pos.customerPhone || '');
+                        const posName = String(pos.customerName || '').toLowerCase();
+                        // Match by phone or by exact name
+                        if (crmPhone && posPhone && crmPhone === posPhone) return true;
+                        if (crmName && posName && crmName === posName) return true;
+                        return false;
+                    });
+                    if (matchedPos) {
+                        crm.orderCount = Number(matchedPos.orderCount) || crm.orderCount;
+                        if (!crm.customerPhone && matchedPos.customerPhone) {
+                            crm.customerPhone = matchedPos.customerPhone;
+                        }
+                        if (!crm.address && matchedPos.address) {
+                            crm.address = matchedPos.address;
+                        }
+                    }
+                }
+
+                // Add POS-only customers (those NOT in CRM)
+                for (const pos of posCustomers) {
+                    const posPhone = String(pos.customerPhone || '');
+                    const posPsid = String(pos.psid || '');
+                    const posName = String(pos.customerName || '').toLowerCase();
+
+                    const alreadyInCrm =
+                        (posPsid && crmPsids.has(posPsid)) ||
+                        (posPhone && crmPhones.has(posPhone)) ||
+                        (posName && crmNames.has(posName));
+
+                    if (!alreadyInCrm && posPsid) {
+                        posExtra.push({ ...pos, source: "pos" });
+                    }
+                }
+
+                console.log(`[broadcast] CRM+POS merge: ${crmCustomers.length} CRM + ${posExtra.length} POS-only = ${crmCustomers.length + posExtra.length} total`);
+            } catch (err) {
+                console.error("[broadcast] POS supplement fetch failed (non-critical):", err);
+            }
+
+            const mergedCustomers = [...crmCustomers, ...posExtra];
+            return NextResponse.json({
+                ...crmResult,
+                customers: mergedCustomers,
+                total: mergedCustomers.length,
+                debug: {
+                    ...(crmResult.debug as Record<string, unknown> || {}),
+                    posExtra: posExtra.length,
+                    mergedTotal: mergedCustomers.length,
+                    crmOnly: crmCustomers.length,
+                },
+            });
+        }
+
+        // ─── Fallback: POS Customers only (CRM failed) ───────────────────
         const posResponse = await fetchPOSCustomers(config, shop, page, pageFilter);
-        // Inject CRM warning into POS response so frontend can display it
         if (crmError) {
             const posData = await posResponse.json();
             return NextResponse.json({
@@ -314,50 +491,115 @@ export async function GET(req: NextRequest) {
 }
 
 // ─── CRM Conversations fetcher ───────────────────────────────────────────────
-// ═══ Pancake CRM hard-caps at 500 conversations, no pagination supported ═══
+// ═══ Multi-strategy fetch: vượt giới hạn 500 bằng tag-based + cursor splitting ═══
+
+async function fetchCRMBatch(
+    apiUrl: string, token: string, pageId: string, extraParams: string = ""
+): Promise<{ conversations: CRMConversation[]; error?: string }> {
+    const url = `${apiUrl}/pages/${pageId}/conversations?access_token=${token}&limit=500${extraParams}`;
+    try {
+        const res = await fetch(url);
+        const data = await res.json();
+        if (data.error_code) return { conversations: [], error: `[${data.error_code}] ${data.message}` };
+        return { conversations: data.conversations || [] };
+    } catch (err) {
+        return { conversations: [], error: String(err) };
+    }
+}
+
 async function fetchCRMConversations(
     apiUrl: string,
     token: string,
     pageId: string,
     _page: number
 ): Promise<object | null> {
+    const seenIds = new Set<string>();
     const allConversations: CRMConversation[] = [];
-    let crmApiError: string | null = null;
+    const strategyLog: Array<{ strategy: string; fetched: number; new: number }> = [];
 
-    const url = `${apiUrl}/pages/${pageId}/conversations?access_token=${token}&limit=500`;
-    
-    try {
-        const res = await fetch(url);
-        const data = await res.json();
-
-        if (data.error_code) {
-            crmApiError = `[${data.error_code}] ${data.message || 'Unknown CRM error'}`;
-            console.error(`[broadcast] CRM Error: ${crmApiError}`);
-            return null;
+    const addBatch = (batch: CRMConversation[], strategy: string) => {
+        let newCount = 0;
+        for (const c of batch) {
+            if (c.id && !seenIds.has(String(c.id))) {
+                seenIds.add(String(c.id));
+                allConversations.push(c);
+                newCount++;
+            }
         }
+        strategyLog.push({ strategy, fetched: batch.length, new: newCount });
+        console.log(`[broadcast] CRM [${strategy}]: fetched=${batch.length}, new=${newCount}, total=${allConversations.length}`);
+        return newCount;
+    };
 
-        const conversations: CRMConversation[] = data.conversations || [];
-        for (const c of conversations) {
-            allConversations.push(c);
-        }
-
-        console.log(`[broadcast] CRM: ${allConversations.length} conversations fetched for pageId=${pageId}`);
-    } catch (err) {
-        console.error(`[broadcast] CRM fetch error:`, err);
+    // ═══ STRATEGY 1: Default fetch (newest 500) ═══
+    const batch1 = await fetchCRMBatch(apiUrl, token, pageId);
+    if (batch1.error) {
+        console.error(`[broadcast] CRM Error: ${batch1.error}`);
         return null;
+    }
+    addBatch(batch1.conversations, "default");
+
+    // Only try additional strategies if we hit the 500 cap
+    if (batch1.conversations.length >= 500) {
+        // ═══ STRATEGY 2: Cursor pagination (last_conversation_id) ═══
+        // Loop with cursor until no new conversations
+        let cursor = batch1.conversations[batch1.conversations.length - 1]?.id;
+        let cursorAttempts = 0;
+        const maxCursorPages = 10;
+        while (cursor && cursorAttempts < maxCursorPages) {
+            const cursorBatch = await fetchCRMBatch(apiUrl, token, pageId, `&last_conversation_id=${cursor}`);
+            const newFromCursor = addBatch(cursorBatch.conversations, `cursor_page_${cursorAttempts + 1}`);
+            if (newFromCursor === 0 || cursorBatch.conversations.length === 0) break;
+            cursor = cursorBatch.conversations[cursorBatch.conversations.length - 1]?.id;
+            cursorAttempts++;
+        }
+
+        // ═══ STRATEGY 3: Per-tag filtering ═══
+        // Each tag returns up to 500 conversations → different subset
+        let tagList: Array<{ id: number; name: string }> = [];
+        try {
+            const tagUrl = `${apiUrl}/pages/${pageId}/conversation_tags?access_token=${token}`;
+            const tagRes = await fetch(tagUrl);
+            const tagData = await tagRes.json();
+            tagList = (tagData.conversation_tags || []).map((t: { id: number; name: string }) => ({
+                id: Number(t.id),
+                name: String(t.name || ''),
+            }));
+        } catch { /* ignore */ }
+
+        for (const tag of tagList) {
+            const tagBatch = await fetchCRMBatch(apiUrl, token, pageId, `&tag_id=${tag.id}`);
+            if (tagBatch.conversations.length > 0) {
+                addBatch(tagBatch.conversations, `tag:${tag.name}`);
+            }
+        }
+
+        // ═══ STRATEGY 4: Type-based filtering (inbox vs comment) ═══
+        for (const type of ["inbox", "comment"]) {
+            const typeBatch = await fetchCRMBatch(apiUrl, token, pageId, `&type=${type}`);
+            if (typeBatch.conversations.length > 0) {
+                addBatch(typeBatch.conversations, `type:${type}`);
+            }
+        }
+
+        // ═══ STRATEGY 5: is_read filtering ═══
+        for (const isRead of ["true", "false"]) {
+            const readBatch = await fetchCRMBatch(apiUrl, token, pageId, `&is_read=${isRead}`);
+            if (readBatch.conversations.length > 0) {
+                addBatch(readBatch.conversations, `is_read:${isRead}`);
+            }
+        }
     }
 
     // ═══ FILTER: chỉ giữ conversations thuộc đúng page_id ═══
-    // Pancake CRM có thể trả conversations từ nhiều pages (token-level access)
     const filteredConversations = allConversations.filter(c => {
         const cPageId = String(c.page_id || '');
         return cPageId === pageId;
     });
 
-    console.log(`[broadcast] CRM after page_id filter: ${filteredConversations.length} (filtered from ${allConversations.length})`);
+    console.log(`[broadcast] CRM after page_id filter: ${filteredConversations.length} (from ${allConversations.length} total merged)`);
 
     // ═══ RESOLVE TAG IDs → TAG NAMES ═══
-    // Fetch conversation tags for this page to map numeric IDs to names
     let tagMap: Map<number, string> = new Map();
     try {
         const tagUrl = `${apiUrl}/pages/${pageId}/conversation_tags?access_token=${token}`;
@@ -386,13 +628,10 @@ async function fetchCRMConversations(
                     phone = (p as Record<string, string>).phone_number || (p as Record<string, string>).captured || String(p);
                 }
             }
-            // ═══ FIX: Nếu CRM has_phone = true nhưng phone rỗng → đặt placeholder ═══
-            // Điều này đảm bảo filter "chưa mua" sẽ loại đúng khách đã có SĐT
             if (!phone && c.has_phone) {
                 phone = "has_phone";
             }
 
-            // ═══ FIX: Resolve tag IDs → tag names ═══
             const resolvedTags = (c.tags || []).map((t: number) => {
                 const name = tagMap.get(Number(t));
                 return name || String(t);
@@ -436,7 +675,12 @@ async function fetchCRMConversations(
             filteredTotal: filteredConversations.length,
             requestedPageId: pageId,
             pageIdBreakdown: Object.fromEntries(uniquePageIds),
-            note: "Pancake CRM hard-caps at 500 conversations, no pagination available",
+            strategies: strategyLog,
+            note: allConversations.length > 500
+                ? `Multi-strategy fetch: vượt 500 cap! Lấy được ${allConversations.length} conversations`
+                : batch1.conversations.length >= 500
+                    ? "Hit 500 cap nhưng các strategy khác không tìm thêm được data mới"
+                    : `Chỉ có ${allConversations.length} conversations (dưới 500 cap)`,
         },
     };
 }
