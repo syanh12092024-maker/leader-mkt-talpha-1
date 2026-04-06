@@ -870,10 +870,11 @@ export default function AdsCommandCenter() {
                             )}
                         </tbody>
                         </table>
+                        <div className="h-14" />
                 </div>
                 {/* ── FIXED BOTTOM TOTALS BAR ── */}
                 {groupedCampaigns.length > 0 && (
-                    <div className="fixed bottom-0 left-[240px] right-0 z-50 bg-slate-50 border-t-2 border-slate-300 shadow-[0_-4px_12px_rgba(0,0,0,0.1)] overflow-x-auto">
+                    <div className="fixed bottom-0 left-[256px] right-0 z-50 bg-white border-t-2 border-slate-300 shadow-[0_-4px_16px_rgba(0,0,0,0.12)] overflow-x-auto">
                         <table className="w-full text-[11px]" style={{ minWidth: "1080px" }}>
                             <colgroup>
                                 <col style={{ width: "20%" }} />
@@ -884,14 +885,14 @@ export default function AdsCommandCenter() {
                             </colgroup>
                             <tbody>
                                 <tr className="font-bold text-[11px]">
-                                    <td className="pl-4 pr-2 py-2.5 border-r border-slate-200" colSpan={2}>
-                                        <div className="text-slate-500 text-[10px] font-bold">
-                                            Kết quả từ {groupedCampaigns.length} chiến dịch
+                                    <td className="pl-4 pr-2 py-1.5 border-r border-slate-200" colSpan={2}>
+                                        <div className="text-slate-700 text-[10px] font-extrabold">
+                                            ⚡ Kết quả từ {groupedCampaigns.length} chiến dịch
                                         </div>
                                         {posBreakdown.length > 0 && (
-                                            <div className="flex flex-wrap gap-x-3 mt-0.5">
+                                            <div className="flex flex-wrap gap-x-2 mt-0.5">
                                                 {posBreakdown.map(m => (
-                                                    <span key={m.name} className="text-[9px] text-red-500 font-semibold">
+                                                    <span key={m.name} className="text-[8px] text-red-500 font-semibold">
                                                         {m.name} <span className="font-black">{m.count}</span> <span className="text-slate-400">({formatVNDCompact(m.revenue)})</span>
                                                     </span>
                                                 ))}
@@ -899,24 +900,24 @@ export default function AdsCommandCenter() {
                                         )}
                                     </td>
                                     {/* META ADS totals */}
-                                    <td className="px-1.5 py-2.5 text-right font-mono text-slate-700 whitespace-nowrap">{formatVNDCompact(d.spend)}</td>
-                                    <td className="px-1.5 py-2.5 text-right font-mono text-blue-700">{d.purchases || "—"}</td>
-                                    <td className="px-1.5 py-2.5 text-right font-mono text-slate-500 whitespace-nowrap">{d.cost_per_purchase > 0 ? formatVNDCompact(d.cost_per_purchase) : "—"}</td>
-                                    <td className="px-1.5 py-2.5 text-right font-mono text-blue-700 whitespace-nowrap border-r border-slate-200">
+                                    <td className="px-1.5 py-1.5 text-right font-mono text-slate-700 whitespace-nowrap">{formatVNDCompact(d.spend)}</td>
+                                    <td className="px-1.5 py-1.5 text-right font-mono text-blue-700">{d.purchases || "—"}</td>
+                                    <td className="px-1.5 py-1.5 text-right font-mono text-slate-500 whitespace-nowrap">{d.cost_per_purchase > 0 ? formatVNDCompact(d.cost_per_purchase) : "—"}</td>
+                                    <td className="px-1.5 py-1.5 text-right font-mono text-blue-700 whitespace-nowrap border-r border-slate-200">
                                         {d.conversion_value > 0 ? formatVNDCompact(d.conversion_value) : "—"}
-                                        {d.roas > 0 && <div className="text-[9px] text-blue-500">ROAS {d.roas.toFixed(2)}x</div>}
+                                        {d.roas > 0 && <span className="text-[9px] text-blue-500 ml-1">ROAS {d.roas.toFixed(2)}x</span>}
                                     </td>
                                     {/* POS totals */}
-                                    <td className="px-1.5 py-2.5 text-right font-mono text-red-600 font-black bg-red-50/50">{dFinal.pos_orders || "—"}</td>
-                                    <td className="px-1.5 py-2.5 text-right font-mono text-red-600 whitespace-nowrap bg-red-50/50">{dFinal.pos_revenue > 0 ? formatVNDCompact(dFinal.pos_revenue) : "—"}</td>
-                                    <td className={cn("px-1.5 py-2.5 text-right font-mono font-bold whitespace-nowrap bg-red-50/50 border-r border-slate-200",
+                                    <td className="px-1.5 py-1.5 text-right font-mono text-red-600 font-black bg-red-50/50">{dFinal.pos_orders || "—"}</td>
+                                    <td className="px-1.5 py-1.5 text-right font-mono text-red-600 whitespace-nowrap bg-red-50/50">{dFinal.pos_revenue > 0 ? formatVNDCompact(dFinal.pos_revenue) : "—"}</td>
+                                    <td className={cn("px-1.5 py-1.5 text-right font-mono font-bold whitespace-nowrap bg-red-50/50 border-r border-slate-200",
                                         dFinal.pos_roas >= 3 ? "text-emerald-600" : dFinal.pos_roas >= 1 ? "text-red-600" : "text-slate-400")}>
                                         {dFinal.pos_roas > 0 ? `${dFinal.pos_roas.toFixed(1)}x` : "—"}
                                     </td>
                                     {/* Tương tác totals */}
-                                    <td className="px-1.5 py-2.5 text-right font-mono text-slate-600">{d.messages || "—"}</td>
-                                    <td className="px-1.5 py-2.5 text-right font-mono text-slate-500 whitespace-nowrap">{d.cost_per_message > 0 ? formatVNDCompact(d.cost_per_message) : "—"}</td>
-                                    <td className="pr-4 pl-1.5 py-2.5 text-right font-mono text-slate-500">{d.comments || "—"}</td>
+                                    <td className="px-1.5 py-1.5 text-right font-mono text-slate-600">{d.messages || "—"}</td>
+                                    <td className="px-1.5 py-1.5 text-right font-mono text-slate-500 whitespace-nowrap">{d.cost_per_message > 0 ? formatVNDCompact(d.cost_per_message) : "—"}</td>
+                                    <td className="pr-4 pl-1.5 py-1.5 text-right font-mono text-slate-500">{d.comments || "—"}</td>
                                 </tr>
                             </tbody>
                         </table>
