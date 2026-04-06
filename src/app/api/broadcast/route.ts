@@ -314,88 +314,38 @@ export async function GET(req: NextRequest) {
 }
 
 // ─── CRM Conversations fetcher ───────────────────────────────────────────────
-// ═══ Pancake CRM dùng cursor pagination: last_conversation_id ═══
+// ═══ Pancake CRM hard-caps at 500 conversations, no pagination supported ═══
 async function fetchCRMConversations(
     apiUrl: string,
     token: string,
     pageId: string,
     _page: number
 ): Promise<object | null> {
-    const limit = 500; // ═══ Will adjust based on debugCrm results ═══
     const allConversations: CRMConversation[] = [];
-    const seenIds = new Set<string>();
-    const maxIterations = 200; // Safety: 200 × 500 = 100,000 max
     let crmApiError: string | null = null;
-    let iteration = 0;
-    let lastConversationId: string | null = null; // ═══ CURSOR: Pancake CRM pagination ═══
-    let consecutiveEmpty = 0;
 
-    while (iteration < maxIterations && consecutiveEmpty < 2) {
-        iteration++;
+    const url = `${apiUrl}/pages/${pageId}/conversations?access_token=${token}&limit=500`;
+    
+    try {
+        const res = await fetch(url);
+        const data = await res.json();
 
-        // ═══ BUILD URL: first call = no cursor, subsequent = last_conversation_id ═══
-        let url = `${apiUrl}/pages/${pageId}/conversations?access_token=${token}&limit=${limit}`;
-        if (lastConversationId) {
-            url += `&last_conversation_id=${lastConversationId}`;
+        if (data.error_code) {
+            crmApiError = `[${data.error_code}] ${data.message || 'Unknown CRM error'}`;
+            console.error(`[broadcast] CRM Error: ${crmApiError}`);
+            return null;
         }
-        
-        try {
-            const res = await fetch(url);
-            const data = await res.json();
 
-            if (data.error_code) {
-                crmApiError = `[${data.error_code}] ${data.message || 'Unknown CRM error'}`;
-                console.error(`[broadcast] CRM Error: ${crmApiError}`);
-                if (allConversations.length === 0) return null;
-                break;
-            }
-
-            const conversations: CRMConversation[] = data.conversations || [];
-            
-            if (conversations.length === 0) {
-                console.log(`[broadcast] CRM iter=${iteration}: empty response → done | total=${allConversations.length}`);
-                consecutiveEmpty++;
-                break;
-            }
-            
-            // ═══ DEDUP + collect ═══
-            let newCount = 0;
-            for (const c of conversations) {
-                const cId = String(c.id || '');
-                if (cId && !seenIds.has(cId)) {
-                    seenIds.add(cId);
-                    allConversations.push(c);
-                    newCount++;
-                }
-            }
-
-            // ═══ UPDATE CURSOR: ID of the last conversation in this batch ═══
-            const batchLastConvo = conversations[conversations.length - 1];
-            const newCursor = String(batchLastConvo?.id || '');
-
-            console.log(`[broadcast] CRM iter=${iteration}: ${conversations.length} returned, ${newCount} new | total=${allConversations.length} | cursor=${newCursor}`);
-
-            // Nếu cursor không đổi hoặc 100% duplicate → hết data
-            if (newCount === 0 || newCursor === lastConversationId) {
-                console.log(`[broadcast] CRM: no new data or cursor unchanged → done at total=${allConversations.length}`);
-                break;
-            }
-
-            lastConversationId = newCursor;
-            
-            // Nếu API trả ít hơn limit → batch cuối
-            if (conversations.length < limit) {
-                console.log(`[broadcast] CRM: ${conversations.length} < ${limit} → last batch | total=${allConversations.length}`);
-                break;
-            }
-            
-        } catch (err) {
-            console.error(`[broadcast] CRM fetch error iter=${iteration}:`, err);
-            consecutiveEmpty++;
+        const conversations: CRMConversation[] = data.conversations || [];
+        for (const c of conversations) {
+            allConversations.push(c);
         }
+
+        console.log(`[broadcast] CRM: ${allConversations.length} conversations fetched for pageId=${pageId}`);
+    } catch (err) {
+        console.error(`[broadcast] CRM fetch error:`, err);
+        return null;
     }
-
-    console.log(`[broadcast] CRM DONE: ${allConversations.length} conversations in ${iteration} iterations for pageId=${pageId}`);
 
     // ═══ FILTER: chỉ giữ conversations thuộc đúng page_id ═══
     // Pancake CRM có thể trả conversations từ nhiều pages (token-level access)
@@ -486,9 +436,7 @@ async function fetchCRMConversations(
             filteredTotal: filteredConversations.length,
             requestedPageId: pageId,
             pageIdBreakdown: Object.fromEntries(uniquePageIds),
-            iterations: iteration,
-            paginationMethod: "last_conversation_id",
-            lastCursor: lastConversationId,
+            note: "Pancake CRM hard-caps at 500 conversations, no pagination available",
         },
     };
 }
