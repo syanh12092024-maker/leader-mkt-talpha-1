@@ -235,25 +235,39 @@ export async function GET(req: NextRequest) {
 }
 
 // ─── CRM Conversations fetcher ───────────────────────────────────────────────
+// ═══ SMART PAGINATION: page= trước, nếu duplicate → tự chuyển before= cursor ═══
 async function fetchCRMConversations(
     apiUrl: string,
     token: string,
     pageId: string,
     _page: number
 ): Promise<object | null> {
-    const limit = 500; // ═══ Pancake CRM max per page ═══
+    const limit = 500;
     const allConversations: CRMConversation[] = [];
-    const seenIds = new Set<string>(); // ═══ DEDUP: track IDs đã thấy ═══
+    const seenIds = new Set<string>();
     let currentPage = 1;
     let emptyStreak = 0;
     const maxEmptyPages = 3;
-    const maxPages = 500; // ═══ MAX: 500 pages × 500 = 250,000 conversations ═══
+    const maxIterations = 200; // Safety cap
     let crmApiError: string | null = null;
-    let consecutiveDupPages = 0;
+    let iteration = 0;
 
-    // Loop through pages, STOP when truly no more data
-    while (emptyStreak < maxEmptyPages && currentPage <= maxPages) {
-        const url = `${apiUrl}/pages/${pageId}/conversations?access_token=${token}&limit=${limit}&page=${currentPage}`;
+    // ═══ Dual-strategy state ═══
+    let useCursorMode = false;       // Chuyển sang cursor mode khi page= fail
+    let lastBatchLastId: string | null = null; // ID cuối cùng của batch trước
+
+    while (emptyStreak < maxEmptyPages && iteration < maxIterations) {
+        iteration++;
+
+        // ═══ BUILD URL: page= hoặc before= tùy strategy ═══
+        let url: string;
+        if (useCursorMode && lastBatchLastId) {
+            // Cursor mode: dùng before={lastId} để lấy batch tiếp theo
+            url = `${apiUrl}/pages/${pageId}/conversations?access_token=${token}&limit=${limit}&before=${lastBatchLastId}`;
+        } else {
+            // Page mode: dùng page= parameter
+            url = `${apiUrl}/pages/${pageId}/conversations?access_token=${token}&limit=${limit}&page=${currentPage}`;
+        }
         
         try {
             const res = await fetch(url);
@@ -262,9 +276,6 @@ async function fetchCRMConversations(
             if (data.error_code) {
                 crmApiError = `[${data.error_code}] ${data.message || 'Unknown CRM error'}`;
                 console.error(`[broadcast] CRM Error ${data.error_code}: ${data.message} | pageId=${pageId}`);
-                if (data.platform_specific_error) {
-                    console.error(`[broadcast] CRM Platform error: code=${data.platform_specific_error.code} subcode=${data.platform_specific_error.subcode} msg=${data.platform_specific_error.message}`);
-                }
                 if (allConversations.length === 0) return null;
                 break;
             }
@@ -273,12 +284,13 @@ async function fetchCRMConversations(
             
             if (conversations.length === 0) {
                 emptyStreak++;
-                currentPage++;
+                if (!useCursorMode) currentPage++;
                 continue;
             }
             
-            // ═══ DEDUP CHECK ═══
+            // ═══ DEDUP + track IDs ═══
             let newCount = 0;
+            let batchLastId: string | null = null;
             for (const c of conversations) {
                 const cId = String(c.id || '');
                 if (cId && !seenIds.has(cId)) {
@@ -286,37 +298,47 @@ async function fetchCRMConversations(
                     allConversations.push(c);
                     newCount++;
                 }
+                batchLastId = cId; // Luôn update bất kể dup hay không
             }
 
-            console.log(`[broadcast] CRM page ${currentPage}: ${conversations.length} returned, ${newCount} new, ${conversations.length - newCount} dups | total=${allConversations.length}`);
+            const mode = useCursorMode ? 'CURSOR' : 'PAGE';
+            console.log(`[broadcast] CRM [${mode}] iter=${iteration}: ${conversations.length} returned, ${newCount} new | total=${allConversations.length}`);
 
-            if (newCount === 0) {
-                consecutiveDupPages++;
-                // ═══ 3 consecutive all-duplicate pages → chắc chắn hết data ═══
-                if (consecutiveDupPages >= 3) {
-                    console.log(`[broadcast] CRM: ${consecutiveDupPages} consecutive all-dup pages → stopping at total=${allConversations.length}`);
-                    break;
-                }
-            } else {
-                consecutiveDupPages = 0;
+            // ═══ AUTO-SWITCH: page= trả 100% duplicate → chuyển cursor mode ═══
+            if (newCount === 0 && !useCursorMode && allConversations.length > 0 && lastBatchLastId) {
+                console.log(`[broadcast] CRM: page=${currentPage} returned ALL duplicates → switching to CURSOR mode (before=${lastBatchLastId})`);
+                useCursorMode = true;
+                // Không tăng currentPage, retry với cursor mode
+                continue;
+            }
+
+            // ═══ Nếu cursor mode cũng trả duplicate → thật sự hết data ═══
+            if (newCount === 0 && useCursorMode) {
+                console.log(`[broadcast] CRM: CURSOR mode also returned duplicates → data exhausted at total=${allConversations.length}`);
+                break;
+            }
+
+            // Cập nhật cursor cho batch tiếp theo
+            if (batchLastId) {
+                lastBatchLastId = batchLastId;
             }
             
             // Nếu API trả ít hơn limit → đã hết data
             if (conversations.length < limit) {
-                console.log(`[broadcast] CRM page ${currentPage}: returned ${conversations.length} < limit ${limit} → last page | total=${allConversations.length}`);
+                console.log(`[broadcast] CRM: ${conversations.length} < limit ${limit} → last batch | total=${allConversations.length}`);
                 break;
             }
             
             emptyStreak = 0;
-            currentPage++;
+            if (!useCursorMode) currentPage++;
         } catch (err) {
-            console.error(`[broadcast] CRM fetch page ${currentPage} error:`, err);
+            console.error(`[broadcast] CRM fetch iter ${iteration} error:`, err);
             emptyStreak++;
-            currentPage++;
+            if (!useCursorMode) currentPage++;
         }
     }
 
-    console.log(`[broadcast] CRM TOTAL: ${allConversations.length} conversations across ${currentPage} pages for pageId=${pageId}`);
+    console.log(`[broadcast] CRM TOTAL: ${allConversations.length} unique conversations in ${iteration} iterations for pageId=${pageId} (mode=${useCursorMode ? 'CURSOR' : 'PAGE'})`);
 
     // ═══ FILTER: chỉ giữ conversations thuộc đúng page_id ═══
     // Pancake CRM có thể trả conversations từ nhiều pages (token-level access)
