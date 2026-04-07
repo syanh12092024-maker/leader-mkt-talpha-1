@@ -1023,6 +1023,7 @@ export async function POST(req: NextRequest) {
         let recipients: Array<{ psid: string; pageFbId: string; name: string; conversationId?: string }>;
         let message: string;
         let forceGraphAPI = false;
+        let skipDedup = false;
         let imageFiles: File[] = []; // File objects from FormData
         let imageStrings: string[] = []; // base64 strings from JSON
 
@@ -1046,6 +1047,7 @@ export async function POST(req: NextRequest) {
             message = body.message || '';
             imageStrings = body.images || [];
             forceGraphAPI = body.forceGraphAPI === true;
+            skipDedup = body.skipDedup === true;
         }
 
         const hasImages = imageFiles.length > 0 || imageStrings.length > 0;
@@ -1116,9 +1118,9 @@ export async function POST(req: NextRequest) {
         cleanupDedup();
 
         for (const recipient of recipients) {
-            // ═══ DEDUP CHECK: đã gửi PSID này trong 5 phút? ═══
+            // ═══ DEDUP CHECK: đã gửi PSID này trong 5 phút? (skip khi gọi từ cron) ═══
             const dedupKey = `${recipient.psid}_${recipient.pageFbId}`;
-            if (sentCache.has(dedupKey)) {
+            if (!skipDedup && sentCache.has(dedupKey)) {
                 const lastSent = sentCache.get(dedupKey)!;
                 const secsAgo = Math.round((Date.now() - lastSent) / 1000);
                 console.log(`[DEDUP] BLOCKED: ${recipient.name} (${recipient.psid}) - đã gửi ${secsAgo}s trước`);

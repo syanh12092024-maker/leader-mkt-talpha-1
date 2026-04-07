@@ -266,6 +266,7 @@ async function fireSegment(
                     recipients: batch,
                     message: seg.message,
                     forceGraphAPI: true,
+                    skipDedup: true,
                 }),
             });
             const data = await res.json();
@@ -274,18 +275,8 @@ async function fireSegment(
                 if (r.success) successCount++;
                 else errorCount++;
             }
-            // Log first 2 batch errors for debugging
-            if (i < BATCH_SIZE * 2) {
-                const errors = batchResults.filter((r: { success: boolean; error?: string }) => !r.success);
-                if (errors.length > 0) {
-                    log(`  ❌ Batch ${i / BATCH_SIZE}: ${errors[0]?.error || data.error || JSON.stringify(data).slice(0, 200)}`);
-                }
-            }
-        } catch (err) {
+        } catch {
             errorCount += batch.length;
-            if (i < BATCH_SIZE * 2) {
-                log(`  💥 Batch ${i / BATCH_SIZE} exception: ${err instanceof Error ? err.message : String(err)}`);
-            }
         }
 
         // Short delay between batches (100ms)
