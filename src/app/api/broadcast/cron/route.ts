@@ -245,40 +245,47 @@ async function fireSegment(
         return { scheduleId: schedule.id, segIdx: seg.segIdx, hour: seg.hour, recipients: 0, success: 0, errors: 0 };
     }
 
-    // 3. Send messages one by one
+    // 3. Send messages in batches of 10, max 100 per cron run (Vercel Hobby = 60s timeout)
+    const MAX_PER_CRON = 100;
+    const BATCH_SIZE = 10;
     let successCount = 0;
     let errorCount = 0;
+    const sendList = recipients.slice(0, MAX_PER_CRON);
+    const remaining = recipients.length - sendList.length;
+    if (remaining > 0) {
+        log(`  ⚠️ Limiting to ${MAX_PER_CRON}/${recipients.length} recipients (remaining ${remaining} next cron)`);
+    }
 
-    for (let i = 0; i < recipients.length; i++) {
+    for (let i = 0; i < sendList.length; i += BATCH_SIZE) {
+        const batch = sendList.slice(i, i + BATCH_SIZE);
         try {
             const res = await fetch(`${baseUrl}/api/broadcast`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                    recipients: [recipients[i]],
+                    recipients: batch,
                     message: seg.message,
                     forceGraphAPI: true,
                 }),
             });
             const data = await res.json();
-            if (data.results?.[0]?.success) {
-                successCount++;
-            } else {
-                errorCount++;
-                if (i < 3) log(`  ❌ ${recipients[i].name}: ${data.results?.[0]?.error || "Unknown"}`);
+            const batchResults = data.results || [];
+            for (const r of batchResults) {
+                if (r.success) successCount++;
+                else errorCount++;
             }
         } catch {
-            errorCount++;
+            errorCount += batch.length;
         }
 
-        // Delay between sends (300ms)
-        if (i < recipients.length - 1) {
-            await new Promise((r) => setTimeout(r, 300));
+        // Short delay between batches (100ms)
+        if (i + BATCH_SIZE < sendList.length) {
+            await new Promise((r) => setTimeout(r, 100));
         }
 
         // Log progress every 50
-        if ((i + 1) % 50 === 0) {
-            log(`  📊 Progress: ${i + 1}/${recipients.length} (✅${successCount} ❌${errorCount})`);
+        if ((i + BATCH_SIZE) % 50 === 0 || i + BATCH_SIZE >= sendList.length) {
+            log(`  📊 Progress: ${Math.min(i + BATCH_SIZE, sendList.length)}/${sendList.length} (✅${successCount} ❌${errorCount})`);
         }
     }
 
