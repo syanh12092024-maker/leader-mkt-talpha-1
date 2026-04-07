@@ -125,10 +125,28 @@ export async function GET(req: NextRequest) {
                     log(`  ✅ Seg ${seg.segIdx} (${seg.hour}h) already sent today`);
                     continue;
                 }
-                // Skip currently sending (race condition guard)
+                // Auto-reset stuck "sending" segments (crash recovery)
+                // Nếu segment kẹt ở "sending" hơn 10 phút → reset về pending
                 if (seg.status === "sending") {
-                    log(`  ⏳ Seg ${seg.segIdx} (${seg.hour}h) currently sending, skip`);
-                    continue;
+                    const stuckMinutes = schedule.lastFiredAt
+                        ? (Date.now() - new Date(schedule.lastFiredAt).getTime()) / 60000
+                        : 999;
+                    if (stuckMinutes > 10) {
+                        log(`  🔄 Seg ${seg.segIdx} (${seg.hour}h) stuck in "sending" for ${Math.round(stuckMinutes)}min — resetting`);
+                        seg.status = "pending";
+                        seg.error = undefined;
+                        await saveSchedule(schedule);
+                    } else {
+                        log(`  ⏳ Seg ${seg.segIdx} (${seg.hour}h) currently sending, skip`);
+                        continue;
+                    }
+                }
+
+                // Auto-reset "error" segments to retry
+                if (seg.status === "error") {
+                    log(`  🔄 Seg ${seg.segIdx} (${seg.hour}h) was error — retrying`);
+                    seg.status = "pending";
+                    seg.error = undefined;
                 }
 
                 // Check if it's time to fire
