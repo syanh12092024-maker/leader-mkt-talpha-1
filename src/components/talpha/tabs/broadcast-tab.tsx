@@ -98,7 +98,7 @@ interface SendResult {
     via?: 'pancake' | 'fb_graph_api';
 }
 
-// ─── Schedule types + localStorage ───────────────────────────────────────────
+// ─── Schedule types (synced with BigQuery via API) ───────────────────────────
 type SegmentStatus = 'pending' | 'sending' | 'sent' | 'error';
 
 interface ScheduleSegment {
@@ -127,35 +127,68 @@ interface BroadcastSchedule {
     nextFireAt: string | null;
     note?: string;
     lastSegmentIndex?: number;
-    lastRunDate?: string; // ISO date "2026-03-30" — chỉ chạy 1 lần/ngày/segment
-    firedDates?: string[]; // Danh sách ngày bắn thành công, ví dụ ["2026-03-28", "2026-03-29"]
+    lastRunDate?: string;
+    firedDates?: string[];
 }
 
-const SCHEDULE_KEY = "broadcast_schedules_v2";
-
-function loadSchedules(): BroadcastSchedule[] {
-    // Legacy support disabled, loaded via API in useEffect
-    return [];
+// ─── API helpers (thay thế localStorage) ─────────────────────────────────────
+async function fetchSchedulesFromAPI(): Promise<BroadcastSchedule[]> {
+    try {
+        const res = await fetch('/api/broadcast/schedule');
+        const data = await res.json();
+        return data.schedules || [];
+    } catch (err) {
+        console.error('[broadcast] fetchSchedules error:', err);
+        return [];
+    }
 }
 
-function saveSchedules(list: BroadcastSchedule[]) {
-    // Fire and forget, state is updated via setSchedules synchronously
-    fetch('/api/schedules', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(list)
-    }).catch(console.error);
+async function saveScheduleToAPI(schedule: BroadcastSchedule): Promise<boolean> {
+    try {
+        const res = await fetch('/api/broadcast/schedule', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'save', schedule }),
+        });
+        return res.ok;
+    } catch { return false; }
+}
+
+async function deleteScheduleFromAPI(scheduleId: string): Promise<boolean> {
+    try {
+        const res = await fetch('/api/broadcast/schedule', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'delete', scheduleId }),
+        });
+        return res.ok;
+    } catch { return false; }
+}
+
+async function toggleScheduleAPI(scheduleId: string): Promise<boolean> {
+    try {
+        const res = await fetch('/api/broadcast/schedule', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'toggle', scheduleId }),
+        });
+        return res.ok;
+    } catch { return false; }
+}
+
+async function saveNoteAPI(scheduleId: string, note: string): Promise<boolean> {
+    try {
+        const res = await fetch('/api/broadcast/schedule', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'save_note', scheduleId, note }),
+        });
+        return res.ok;
+    } catch { return false; }
 }
 
 function calcNextFireAt(hour: number, utcOffset: number): string {
     return getNextScheduleTime(hour, utcOffset).toISOString();
-}
-
-// Lấy ngày hiện tại theo timezone shop
-function getTodayDateStr(utcOffset: number): string {
-    const now = new Date();
-    const target = new Date(now.getTime() + utcOffset * 3600000 + now.getTimezoneOffset() * 60000);
-    return target.toISOString().slice(0, 10);
 }
 
 // ─── Main Component ───────────────────────────────────────────────────────────
@@ -209,52 +242,45 @@ export default function BroadcastTab() {
     const sendingRef = useRef<Set<string>>(new Set());
     const [showSchedulePreview, setShowSchedulePreview] = useState(false);
     const [scheduledSegments, setScheduledSegments] = useState<Set<number>>(new Set());
-    const [isGlobalPaused, setIsGlobalPaused] = useState(() => {
-        if (typeof window === "undefined") return false;
-        return localStorage.getItem("broadcast_global_paused") === "true";
-    });
+    const [isGlobalPaused, setIsGlobalPaused] = useState(false);
+    const [isLoadingSchedules, setIsLoadingSchedules] = useState(false);
 
     const toggleGlobalPause = () => {
+        // Global pause: toggle isActive for ALL schedules via API
         setIsGlobalPaused(prev => {
             const next = !prev;
-            localStorage.setItem("broadcast_global_paused", String(next));
             setScheduleToast(next ? "⛔ Đã TẠM DỮNG tất cả lịch bắn bot" : "✅ Đã BẬT LẠI lịch bắn bot");
             setTimeout(() => setScheduleToast(null), 3000);
+            // Toggle all schedules
+            schedules.forEach(s => {
+                if (next && s.isActive) toggleScheduleAPI(s.id);
+                if (!next && !s.isActive) toggleScheduleAPI(s.id);
+            });
+            refreshSchedules();
             return next;
         });
     };
 
-    // Load schedules from API on mount
-    useEffect(() => { 
-        fetch('/api/schedules')
-            .then(res => res.json())
-            .then(data => {
-                if (data.success && data.schedules) {
-                    setSchedules(data.schedules);
-                }
-            })
-            .catch(console.error);
+    // ─── Load schedules from BigQuery API on mount ────────────────────────────
+    const refreshSchedules = useCallback(async () => {
+        setIsLoadingSchedules(true);
+        const list = await fetchSchedulesFromAPI();
+        setSchedules(list);
+        setIsLoadingSchedules(false);
     }, []);
 
-    // ⛔ Auto-fire: TẮT HOÀN TOÀN
-    // User chỉ dùng nút "Bắn ngay" thủ công.
-    // Auto-fire timer 30s gây gửi lặp do chạy ngầm → đã tắt.
-    // Nếu cần bật lại auto-fire sau, uncomment block này.
-    /*
+    useEffect(() => { refreshSchedules(); }, [refreshSchedules]);
+
+    // ─── Auto-refresh schedules every 60s to see cron updates ─────────────────
     useEffect(() => {
-        let tickRunning = false;
-        const tick = async () => {
-            if (tickRunning) return;
-            if (localStorage.getItem("broadcast_global_paused") !== "false") return;
-            tickRunning = true;
-            try {
-                // ... auto-fire logic
-            } finally { tickRunning = false; }
-        };
-        const interval = setInterval(tick, 30000);
+        const interval = setInterval(() => {
+            fetchSchedulesFromAPI().then(list => setSchedules(list));
+        }, 60_000);
         return () => clearInterval(interval);
     }, []);
-    */
+
+    // ✅ Auto-fire giờ chạy trên SERVER qua Vercel Cron (/api/broadcast/cron)
+    // Client chỉ polling để hiển thị trạng thái — KHÔNG cần giữ tab mở nữa!
 
     // Load shops
     useEffect(() => {
@@ -498,13 +524,15 @@ export default function BroadcastTab() {
             nextFireAt: calcNextFireAt(hour, tz),
             note: existing?.note,
         };
-        const updated = existing
-            ? schedules.map(s => s.id === entry.id ? entry : s)
-            : [...schedules, entry];
-        saveSchedules(updated);
-        setSchedules(updated);
-        setScheduleToast(`✅ Đã lưu lịch ${SCHEDULE_LABELS[hour]} cho ${pageName}`);
-        setTimeout(() => setScheduleToast(null), 3000);
+        saveScheduleToAPI(entry).then(ok => {
+            if (ok) {
+                refreshSchedules();
+                setScheduleToast(`✅ Đã lưu lịch ${SCHEDULE_LABELS[hour]} cho ${pageName}`);
+            } else {
+                setScheduleToast(`❌ Lỗi lưu lịch`);
+            }
+            setTimeout(() => setScheduleToast(null), 3000);
+        });
     };
 
     // ─── Hẹn tất cả đoạn theo mapping cố định ───────────────────────────────
@@ -559,46 +587,41 @@ export default function BroadcastTab() {
             note: existing?.note,
         };
 
-        const updatedSchedules = existing
-            ? schedules.map(s => s.id === scheduleId ? entry : s)
-            : [...schedules, entry];
-
-        saveSchedules(updatedSchedules);
-        setSchedules(updatedSchedules);
         setScheduledSegments(new Set(filledSegments.map(s => s.idx)));
         const hourList = segs.map(s => `${s.hour}h`).join(', ');
-        setScheduleToast(`✅ Đã hẹn 1 lịch (${hourList}) cho ${pageName}`);
-        setTimeout(() => setScheduleToast(null), 4000);
-    };
 
-    const toggleScheduleActive = (id: string) => {
-        const updated = schedules.map(s => {
-            if (s.id !== id) return s;
-            const tz = SHOP_TIMEZONES[s.shopName]?.offset ?? 3;
-            return { ...s, isActive: !s.isActive, nextFireAt: !s.isActive ? calcNextFireAt(s.hour, tz) : s.nextFireAt };
+        saveScheduleToAPI(entry).then(ok => {
+            if (ok) {
+                refreshSchedules();
+                setScheduleToast(`✅ Đã hẹn 1 lịch (${hourList}) cho ${pageName}`);
+            } else {
+                setScheduleToast(`❌ Lỗi lưu lịch`);
+            }
+            setTimeout(() => setScheduleToast(null), 4000);
         });
-        saveSchedules(updated);
-        setSchedules(updated);
     };
 
-    const deleteSchedule = (id: string) => {
-        const updated = schedules.filter(s => s.id !== id);
-        saveSchedules(updated);
-        setSchedules(updated);
+    const toggleScheduleActive = async (id: string) => {
+        await toggleScheduleAPI(id);
+        refreshSchedules();
     };
 
-    // ⛔ AUTO-FIRE ĐÃ CHUYỂN LÊN SERVER (Vercel Cron + API route)
-    // Code gọi ngầm dưới trình duyệt đã bị xóa để tránh kẹt trạng thái và tiết kiệm tài nguyên máy khách.
+    const handleDeleteSchedule = async (id: string) => {
+        await deleteScheduleFromAPI(id);
+        refreshSchedules();
+    };
+
+    // ✅ Auto-fire đã chuyển sang server (Vercel Cron /api/broadcast/cron)
+    // Client chỉ hiển thị trạng thái — schedule status sẽ tự cập nhật qua polling mỗi 60s
 
     const startEditNote = (s: BroadcastSchedule) => {
         setEditingScheduleId(s.id);
         setEditNote(s.note || "");
     };
 
-    const saveNote = (id: string) => {
-        const updated = schedules.map(s => s.id === id ? { ...s, note: editNote } : s);
-        saveSchedules(updated);
-        setSchedules(updated);
+    const saveNote = async (id: string) => {
+        await saveNoteAPI(id, editNote);
+        refreshSchedules();
         setEditingScheduleId(null);
     };
 
@@ -1355,7 +1378,7 @@ export default function BroadcastTab() {
                             <span className="text-[11px] font-normal text-slate-400">({schedules.length} lịch)</span>
                         </h3>
                         <button
-                            onClick={() => { saveSchedules([]); setSchedules([]); }}
+                            onClick={async () => { for (const s of schedules) { await deleteScheduleFromAPI(s.id); } refreshSchedules(); }}
                             className="text-[10px] text-red-400 hover:text-red-600 transition-colors"
                         >
                             Xoá tất cả
@@ -1389,7 +1412,7 @@ export default function BroadcastTab() {
                                         <button onClick={() => startEditNote(s)} className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-semibold bg-blue-50 text-blue-500 hover:bg-blue-100 transition-colors">
                                             <MessageSquare className="h-3 w-3" /> Ghi chú
                                         </button>
-                                        <button onClick={() => deleteSchedule(s.id)} className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-semibold bg-red-50 text-red-400 hover:bg-red-100 transition-colors">
+                                        <button onClick={() => handleDeleteSchedule(s.id)} className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-semibold bg-red-50 text-red-400 hover:bg-red-100 transition-colors">
                                             <X className="h-3 w-3" /> Xoá
                                         </button>
                                     </div>

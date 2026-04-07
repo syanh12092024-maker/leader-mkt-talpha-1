@@ -459,7 +459,55 @@ export async function GET(req: NextRequest) {
                 console.error("[broadcast] POS supplement fetch failed (non-critical):", err);
             }
 
-            const mergedCustomers = [...crmCustomers, ...posExtra];
+            // ─── META GRAPH API SUPPLEMENT ──────────────────────────────────
+            // Lấy thêm PSID mà CRM (cap 500) + POS (chỉ khách đã mua) đều không có.
+            // Đây là cách DUY NHẤT đảm bảo lấy hết khách của 1 page.
+            let metaExtra: Array<Record<string, unknown>> = [];
+            let metaDebug: Record<string, unknown> = {};
+            const userToken = config.facebook_messaging?.user_access_token;
+            if (userToken) {
+                try {
+                    const pageToken = await getFacebookPageToken(
+                        pageFilter,
+                        userToken,
+                        undefined,
+                        config.facebook_messaging?.page_tokens
+                    );
+                    if (pageToken) {
+                        const metaResult = await fetchMetaConversations(pageFilter, pageToken);
+                        metaDebug = {
+                            metaRaw: metaResult.raw,
+                            metaPages: metaResult.pages,
+                            metaError: metaResult.error,
+                            metaTotal: metaResult.customers.length,
+                        };
+
+                        // Build dedup set từ CRM + POS hiện có
+                        const existingPsids = new Set<string>([
+                            ...crmCustomers.map(c => String(c.psid || '')).filter(Boolean),
+                            ...posExtra.map(c => String(c.psid || '')).filter(Boolean),
+                        ]);
+
+                        for (const meta of metaResult.customers) {
+                            const mpsid = String(meta.psid || '');
+                            if (mpsid && !existingPsids.has(mpsid)) {
+                                metaExtra.push(meta);
+                                existingPsids.add(mpsid);
+                            }
+                        }
+                        console.log(`[broadcast] Meta supplement: +${metaExtra.length} new PSIDs (total raw=${metaResult.raw})`);
+                    } else {
+                        metaDebug = { metaError: "No page token resolved" };
+                    }
+                } catch (err) {
+                    console.error("[broadcast] Meta Graph fetch failed (non-critical):", err);
+                    metaDebug = { metaError: err instanceof Error ? err.message : String(err) };
+                }
+            } else {
+                metaDebug = { metaError: "facebook_messaging.user_access_token not configured" };
+            }
+
+            const mergedCustomers = [...crmCustomers, ...posExtra, ...metaExtra];
             return NextResponse.json({
                 ...crmResult,
                 customers: mergedCustomers,
@@ -467,19 +515,47 @@ export async function GET(req: NextRequest) {
                 debug: {
                     ...(crmResult.debug as Record<string, unknown> || {}),
                     posExtra: posExtra.length,
+                    metaExtra: metaExtra.length,
                     mergedTotal: mergedCustomers.length,
                     crmOnly: crmCustomers.length,
+                    ...metaDebug,
                 },
             });
         }
 
-        // ─── Fallback: POS Customers only (CRM failed) ───────────────────
+        // ─── Fallback: POS + Meta (CRM failed) ───────────────────────────
         const posResponse = await fetchPOSCustomers(config, shop, page, pageFilter);
         if (crmError) {
             const posData = await posResponse.json();
+            const posCustomers = (posData.customers || []) as Array<Record<string, unknown>>;
+
+            // Vẫn cố lấy Meta để bù cho CRM lỗi
+            let metaCustomers: Array<Record<string, unknown>> = [];
+            const userToken = config.facebook_messaging?.user_access_token;
+            if (userToken && pageFilter) {
+                try {
+                    const pageToken = await getFacebookPageToken(
+                        pageFilter, userToken, undefined, config.facebook_messaging?.page_tokens
+                    );
+                    if (pageToken) {
+                        const metaResult = await fetchMetaConversations(pageFilter, pageToken);
+                        const posPsids = new Set(posCustomers.map(c => String(c.psid || '')).filter(Boolean));
+                        metaCustomers = metaResult.customers.filter(m => {
+                            const mp = String(m.psid || '');
+                            return mp && !posPsids.has(mp);
+                        });
+                    }
+                } catch (err) {
+                    console.error("[broadcast] Meta fallback failed:", err);
+                }
+            }
+
+            const merged = [...posCustomers, ...metaCustomers];
             return NextResponse.json({
                 ...posData,
-                crmWarning: `⚠️ ${crmError} — Chỉ hiển thị khách ĐÃ MUA từ POS. Để lấy TẤT CẢ khách nhắn tin, đăng nhập lại Pancake CRM.`,
+                customers: merged,
+                total: merged.length,
+                crmWarning: `⚠️ ${crmError} — Đang dùng POS (${posCustomers.length}) + Meta Graph (${metaCustomers.length}). Đăng nhập lại Pancake CRM để lấy thêm tag/snippet.`,
             });
         }
         return posResponse;
@@ -732,6 +808,88 @@ async function fetchCRMConversations(
                     : `Chỉ có ${allConversations.length} conversations (dưới 500 cap)`,
         },
     };
+}
+
+// ─── Meta Graph API: fetch conversations directly (BYPASS Pancake 500 cap) ───
+// Lấy toàn bộ conversations của 1 page bằng cursor pagination thật.
+// Không bị cap 500 — có thể lấy hàng chục nghìn conversations / page.
+interface MetaConversation {
+    id: string;
+    updated_time: string;
+    snippet?: string;
+    message_count?: number;
+    unread_count?: number;
+    participants?: { data: Array<{ id: string; name?: string; email?: string }> };
+}
+
+async function fetchMetaConversations(
+    pageId: string,
+    pageAccessToken: string,
+    maxPages: number = 50,
+): Promise<{
+    customers: Array<Record<string, unknown>>;
+    raw: number;
+    pages: number;
+    error?: string;
+}> {
+    const customers: Array<Record<string, unknown>> = [];
+    const seenPsids = new Set<string>();
+    let raw = 0;
+    let pageCount = 0;
+
+    const fields = "id,updated_time,snippet,message_count,unread_count,participants";
+    let url = `https://graph.facebook.com/v21.0/${pageId}/conversations?platform=messenger&fields=${fields}&limit=100&access_token=${pageAccessToken}`;
+
+    try {
+        while (url && pageCount < maxPages) {
+            const res = await fetch(url);
+            const data = await res.json();
+
+            if (data.error) {
+                return { customers, raw, pages: pageCount, error: `[${data.error.code}] ${data.error.message}` };
+            }
+
+            const batch: MetaConversation[] = data.data || [];
+            raw += batch.length;
+            pageCount++;
+
+            for (const conv of batch) {
+                const participants = conv.participants?.data || [];
+                // Tìm participant ≠ pageId → đó là khách
+                const customer = participants.find(p => String(p.id) !== String(pageId));
+                if (!customer || !customer.id) continue;
+                if (seenPsids.has(customer.id)) continue;
+                seenPsids.add(customer.id);
+
+                customers.push({
+                    id: String(conv.id),
+                    customerName: customer.name || "Không rõ tên",
+                    customerPhone: "",
+                    fbId: String(conv.id),
+                    psid: String(customer.id),
+                    pageFbId: String(pageId),
+                    customerId: "",
+                    conversationLink: `https://www.facebook.com/${conv.id}`,
+                    orderCount: 0,
+                    messageCount: Number(conv.message_count) || 0,
+                    snippet: String(conv.snippet || "").replace(/[\r\n]+/g, " ").slice(0, 100),
+                    tags: [],
+                    address: "",
+                    updatedAt: String(conv.updated_time || ""),
+                    lastInteraction: String(conv.updated_time || ""),
+                    source: "meta" as const,
+                });
+            }
+
+            url = data.paging?.next || "";
+            if (!url) break;
+        }
+
+        console.log(`[broadcast] Meta Graph: ${customers.length} unique PSIDs from ${raw} conversations across ${pageCount} pages`);
+        return { customers, raw, pages: pageCount };
+    } catch (err) {
+        return { customers, raw, pages: pageCount, error: err instanceof Error ? err.message : String(err) };
+    }
 }
 
 // ─── POS Customers fetcher (fallback) ─────────────────────────────────────────
