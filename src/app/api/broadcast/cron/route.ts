@@ -273,7 +273,17 @@ async function fireSegment(
             const batchResults = data.results || [];
             for (const r of batchResults) {
                 if (r.success) successCount++;
-                else errorCount++;
+                else {
+                    errorCount++;
+                    // Log first few errors for debugging
+                    if (errorCount <= 3) {
+                        log(`  ❌ ${r.name || r.psid}: ${r.error || "Unknown error"}`);
+                    }
+                }
+            }
+            // Log raw response for first batch
+            if (i === 0 && batchResults.length === 0) {
+                log(`  ⚠️ Empty results from broadcast API: ${JSON.stringify(data).slice(0, 200)}`);
             }
         } catch {
             errorCount += batch.length;
