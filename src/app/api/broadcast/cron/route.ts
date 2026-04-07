@@ -189,9 +189,9 @@ async function fireSegment(
     log: (msg: string) => void
 ): Promise<{ scheduleId: string; segIdx: number; hour: number; recipients: number; success: number; errors: number }> {
     // 1. Fetch customers for this shop+page
-    const baseUrl = process.env.VERCEL_URL
-        ? `https://${process.env.VERCEL_URL}`
-        : process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL
+        || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null)
+        || "https://talpha-dashboard.vercel.app";
 
     const custUrl = `${baseUrl}/api/broadcast?shopId=${schedule.shopId}&pageFilter=${schedule.pageId}`;
     log(`  📡 Fetching customers: ${custUrl.replace(/api_key=[^&]+/, "api_key=***")}`);
