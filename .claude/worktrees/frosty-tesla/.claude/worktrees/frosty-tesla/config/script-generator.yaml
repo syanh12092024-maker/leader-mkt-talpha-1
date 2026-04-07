@@ -1,0 +1,59 @@
+# ╔══════════════════════════════════════════════════════╗
+# ║  Script Generator — Config riêng cho tạo kịch bản   ║
+# ║  Sao chép từ talpha.yaml, dùng cho Pancake/Botcake   ║
+# ╚══════════════════════════════════════════════════════╝
+
+# ─── PANCAKE POS SHOPS ───
+# Mỗi shop có API key + Shop ID riêng
+# Dùng để push Quick Reply Templates vào Pancake inbox
+poscake:
+  api_url: "https://pos.pages.fm/api/v1"
+  shops:
+    - name: "Saudi"
+      api_key: "441cc47ce8a740b09bbfec1261696cb0"
+      shop_id: "1328205216"
+    - name: "UAE"
+      api_key: "f8ee67fa7ade46beaf3bc9da2fc81b13"
+      shop_id: "1635200759"
+    - name: "Kuwait"
+      api_key: "667685818bcd4da39a604c5df27f29b5"
+      shop_id: "1328205226"
+    - name: "Oman"
+      api_key: "4f09342a9cd84b8fa630f33f5885a23e"
+      shop_id: "1942200986"
+    - name: "Qatar"
+      api_key: "62a53f9e1b334e97906a583e4d567001"
+      shop_id: "1021271617"
+    - name: "Bahrain"
+      api_key: "72ab4b141a4842579308e2b8cd4d5831"
+      shop_id: "100943483"
+    - name: "Japan"
+      api_key: "de34eb3fc92041ce94a41cde5e78a8f9"
+      shop_id: "100293585"
+    - name: "Taiwan"
+      api_key: "1d5e719041a34861be0076cdb26f9688"
+      shop_id: "1328343252"
+
+# ─── PANCAKE CRM ───
+pancake_crm:
+  api_url: "https://pages.fm/api/v1"
+  api_token: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpbmZvIjp7Im9zIjoxLCJjbGllbnRfaXAiOiIxLjUyLjIzMi4xODIiLCJicm93c2VyIjoxLCJkZXZpY2VfdHlwZSI6M30sIm5hbWUiOiJT4bu5IEFuaCIsImV4cCI6MTc4MTY2MzQ0NCwiYXBwbGljYXRpb24iOjEsInVpZCI6IjQxMjUxMzliLTFhNGItNDBjMS04MjQwLWNhYjYwYTRlODFiMSIsInNlc3Npb25faWQiOiJkZTEzODAxYy0zMzY5LTQ4M2EtODY4Zi1hZjc0MTc5NzRkMjMiLCJpYXQiOjE3NzM4ODc0NDQsImZiX2lkIjoiNzQ5NjM4MzA0NzMyMjM5IiwibG9naW5fc2Vzc2lvbiI6bnVsbCwiZmJfbmFtZSI6IlPhu7kgQW5oIn0.8K5HfAn39PSObxzlkHicjua4EXVRL3IjVq8Sy_xHhw8"
+
+# ─── FACEBOOK GRAPH API (Gửi tin ngoài 24h) ───
+# App: Talpha Bot (ID: 1522955762585184)
+# ✅ LONG-LIVED USER TOKEN — 60 ngày (tạo 26/03/2026)
+# Scopes: pages_messaging, pages_read_engagement, pages_show_list, pages_manage_metadata
+# Pages: 13 pages Saudi/UAE/Kuwait (auto qua /me/accounts)
+# Tag fallback: HUMAN_AGENT → POST_PURCHASE_UPDATE → ACCOUNT_UPDATE → RESPONSE
+facebook_messaging:
+  app_id: "1522955762585184"
+  app_secret: "9326251be15ccd7d5375e3e0a0b40492"
+  user_access_token: "EAAVpHsU8zmABRC7O3pSB9yhjxrJZCqdKywrriJr9z32x6SntZClfueIgBvzbfiV79UUdlxacfZABrzo1Y2UH09cZA0i1vRJULOjoEflSvhS4ZBiIIUVDMUGApiYZC4Eqgmd6Sjk1BMIZB1vjlsuF6HJnGG8UZBfCGZAuiZBeaLexo4ZAgfOOZAbAZBOpdGR4UrS6zrRa17SLrCEiv11hTAaSk"
+  # page_tokens tự lấy qua /me/accounts — không cần hardcode
+
+# ─── BOTCAKE ───
+# Không có API công khai — dùng browser automation hoặc download file
+botcake:
+  method: "browser_automation"  # hoặc "file_download"
+  login_url: ""                 # CẦN BỔ SUNG — URL trang Botcake
+  upload_url: ""                # CẦN BỔ SUNG — URL trang upload file huấn luyện

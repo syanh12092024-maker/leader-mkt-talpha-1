@@ -127,4 +127,44 @@ export class GoogleSheetsSyncService {
             throw err;
         }
     }
+
+    async readBroadcastState(): Promise<any[]> {
+        try {
+            await this.doc.loadInfo();
+            const sheetTitle = "[SYS] Broadcasts";
+            let sheet = this.doc.sheetsByTitle[sheetTitle];
+            if (!sheet) return [];
+            await sheet.loadCells('A1:A1');
+            const cellVal = sheet.getCell(0, 0).value;
+            if (typeof cellVal === 'string') {
+                return JSON.parse(cellVal);
+            }
+            return [];
+        } catch (err) {
+            console.error("Read Broadcast State Error:", err);
+            return [];
+        }
+    }
+
+    async writeBroadcastState(schedules: any[]): Promise<boolean> {
+        try {
+            await this.doc.loadInfo();
+            const sheetTitle = "[SYS] Broadcasts";
+            let sheet = this.doc.sheetsByTitle[sheetTitle];
+            if (!sheet) {
+                sheet = await this.doc.addSheet({
+                    title: sheetTitle,
+                    gridProperties: { rowCount: 10, columnCount: 2 }
+                });
+            }
+            await sheet.loadCells('A1:A1');
+            const cell = sheet.getCell(0, 0);
+            cell.value = JSON.stringify(schedules);
+            await sheet.saveUpdatedCells();
+            return true;
+        } catch (err) {
+            console.error("Write Broadcast State Error:", err);
+            throw err;
+        }
+    }
 }

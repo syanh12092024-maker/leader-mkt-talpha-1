@@ -134,13 +134,17 @@ interface BroadcastSchedule {
 const SCHEDULE_KEY = "broadcast_schedules_v2";
 
 function loadSchedules(): BroadcastSchedule[] {
-    if (typeof window === "undefined") return [];
-    try { return JSON.parse(localStorage.getItem(SCHEDULE_KEY) || "[]"); }
-    catch { return []; }
+    // Legacy support disabled, loaded via API in useEffect
+    return [];
 }
 
 function saveSchedules(list: BroadcastSchedule[]) {
-    try { localStorage.setItem(SCHEDULE_KEY, JSON.stringify(list)); } catch { /* ignore */ }
+    // Fire and forget, state is updated via setSchedules synchronously
+    fetch('/api/schedules', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(list)
+    }).catch(console.error);
 }
 
 function calcNextFireAt(hour: number, utcOffset: number): string {
@@ -220,8 +224,17 @@ export default function BroadcastTab() {
         });
     };
 
-    // Load schedules from localStorage on mount
-    useEffect(() => { setSchedules(loadSchedules()); }, []);
+    // Load schedules from API on mount
+    useEffect(() => { 
+        fetch('/api/schedules')
+            .then(res => res.json())
+            .then(data => {
+                if (data.success && data.schedules) {
+                    setSchedules(data.schedules);
+                }
+            })
+            .catch(console.error);
+    }, []);
 
     // ⛔ Auto-fire: TẮT HOÀN TOÀN
     // User chỉ dùng nút "Bắn ngay" thủ công.
@@ -574,138 +587,8 @@ export default function BroadcastTab() {
         setSchedules(updated);
     };
 
-    // ═══ AUTO-FIRE: kiểm tra mỗi 60s, đến giờ → tự bắn ═══
-    const autoFireRef = useRef(false); // Tránh race condition
-    useEffect(() => {
-        const interval = setInterval(async () => {
-            if (autoFireRef.current) return; // Đang auto-fire rồi
-            if (isGlobalPaused) return;
-            const currentSchedules = loadSchedules();
-            if (currentSchedules.length === 0) return;
-
-            for (const schedule of currentSchedules) {
-                if (!schedule.isActive || !schedule.segments?.length) continue;
-                const tz = SHOP_TIMEZONES[schedule.shopName]?.offset ?? 3;
-                const todayStr = getTodayDateStr(tz);
-                const now = new Date();
-                const targetNow = new Date(now.getTime() + tz * 3600000 + now.getTimezoneOffset() * 60000);
-                const currentDecimal = targetNow.getHours() + targetNow.getMinutes() / 60;
-
-                for (const seg of schedule.segments) {
-                    // Đã chạy hôm nay rồi?
-                    if (seg.status === 'sent' && schedule.lastRunDate === todayStr) continue;
-                    if (seg.status === 'sending') continue;
-                    // Reset status nếu sang ngày mới
-                    if (schedule.lastRunDate && schedule.lastRunDate !== todayStr) {
-                        seg.status = 'pending';
-                        seg.error = undefined;
-                        seg.sentAt = undefined;
-                    }
-                    // Đã đến giờ? → fire bất kỳ segment nào đã qua giờ mà chưa sent hôm nay
-                    if (currentDecimal >= seg.hour && seg.status !== 'sent') {
-                        autoFireRef.current = true;
-                        seg.status = 'sending';
-                        schedule.lastRunDate = todayStr;
-                        saveSchedules(currentSchedules);
-                        setSchedules([...currentSchedules]);
-
-                        try {
-                            // Lấy customers cho shop+page này
-                            const custRes = await fetch(`/api/broadcast?shopId=${schedule.shopId}&pageFilter=${schedule.pageId}`);
-                            const custData = await custRes.json();
-                            let allCust: Customer[] = custData.customers || [];
-
-                            // ═══ ÁP DỤNG FILTER TỪ LỊCH — loại khách đã mua ═══
-                            if (schedule.filterPurchase === 'no_purchase') {
-                                // Thẻ liên quan đến đã mua/đã gửi hàng
-                                const PURCHASE_TAGS = ['đã gửi', 'đã nhận', 'da gui', 'da nhan', 'mua hàng', 'mua hang', 'đã mua', 'da mua', 'shipped', 'delivered'];
-                                allCust = allCust.filter(c => {
-                                    // Có SĐT hoặc orderCount > 0 → đã mua → loại
-                                    if (c.customerPhone || c.orderCount > 0) return false;
-                                    // Có tag đã gửi/đã nhận → đã mua → loại
-                                    const tagStr = (c.tags || []).map(t => String(t).toLowerCase()).join(' ');
-                                    if (PURCHASE_TAGS.some(pt => tagStr.includes(pt))) return false;
-                                    return true;
-                                });
-                            } else if (schedule.filterPurchase === 'has_purchase') {
-                                allCust = allCust.filter(c => c.customerPhone || c.orderCount > 0);
-                            }
-
-                            const recipients = allCust.map((c: Customer) => ({
-                                psid: c.psid,
-                                pageFbId: c.pageFbId,
-                                name: c.customerName,
-                                conversationId: c.id,
-                            }));
-
-                            if (recipients.length === 0) {
-                                seg.status = 'error';
-                                seg.error = 'Không có khách hàng';
-                            } else {
-                                // Gửi tin nhắn
-                                let successCount = 0;
-                                let errorCount = 0;
-                                // Gửi từng batch 1 người
-                                for (let i = 0; i < recipients.length; i++) {
-                                    try {
-                                        const res = await fetch('/api/broadcast', {
-                                            method: 'POST',
-                                            headers: { 'Content-Type': 'application/json' },
-                                            body: JSON.stringify({
-                                                recipients: [recipients[i]],
-                                                message: seg.message,
-                                                forceGraphAPI: true,
-                                            }),
-                                        });
-                                        const data = await res.json();
-                                        if (data.results?.[0]?.success) successCount++;
-                                        else errorCount++;
-                                    } catch {
-                                        errorCount++;
-                                    }
-                                    // Delay giữa recipients
-                                    if (i < recipients.length - 1) await new Promise(r => setTimeout(r, 300));
-                                }
-
-                                if (errorCount === 0) {
-                                    seg.status = 'sent';
-                                    seg.sentAt = new Date().toISOString();
-                                    // Ghi ngày bắn thành công
-                                    if (!schedule.firedDates) schedule.firedDates = [];
-                                    if (!schedule.firedDates.includes(todayStr)) schedule.firedDates.push(todayStr);
-                                } else if (successCount > 0) {
-                                    seg.status = 'sent';
-                                    seg.sentAt = new Date().toISOString();
-                                    seg.error = `${errorCount} lỗi / ${recipients.length} tổng`;
-                                    // Ghi ngày bắn thành công (dù có 1 số lỗi)
-                                    if (!schedule.firedDates) schedule.firedDates = [];
-                                    if (!schedule.firedDates.includes(todayStr)) schedule.firedDates.push(todayStr);
-                                } else {
-                                    seg.status = 'error';
-                                    seg.error = `Tất cả ${errorCount} gửi thất bại`;
-                                }
-                            }
-
-                            schedule.lastFiredAt = new Date().toISOString();
-                            schedule.nextFireAt = calcNextFireAt(seg.hour, tz);
-                        } catch (err) {
-                            seg.status = 'error';
-                            seg.error = err instanceof Error ? err.message : 'Unknown error';
-                        }
-
-                        saveSchedules(currentSchedules);
-                        setSchedules([...currentSchedules]);
-                        autoFireRef.current = false;
-                        // Chỉ fire 1 segment mỗi lần interval
-                        break;
-                    }
-                }
-            }
-        }, 60_000); // Kiểm tra mỗi 60 giây
-
-        return () => clearInterval(interval);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [isGlobalPaused]);
+    // ⛔ AUTO-FIRE ĐÃ CHUYỂN LÊN SERVER (Vercel Cron + API route)
+    // Code gọi ngầm dưới trình duyệt đã bị xóa để tránh kẹt trạng thái và tiết kiệm tài nguyên máy khách.
 
     const startEditNote = (s: BroadcastSchedule) => {
         setEditingScheduleId(s.id);
