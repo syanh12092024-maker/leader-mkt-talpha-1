@@ -125,28 +125,10 @@ export async function GET(req: NextRequest) {
                     log(`  ✅ Seg ${seg.segIdx} (${seg.hour}h) already sent today`);
                     continue;
                 }
-                // Auto-reset stuck "sending" segments (crash recovery)
-                // Nếu segment kẹt ở "sending" hơn 10 phút → reset về pending
+                // Skip currently sending (race condition guard)
                 if (seg.status === "sending") {
-                    const stuckMinutes = schedule.lastFiredAt
-                        ? (Date.now() - new Date(schedule.lastFiredAt).getTime()) / 60000
-                        : 999;
-                    if (stuckMinutes > 10) {
-                        log(`  🔄 Seg ${seg.segIdx} (${seg.hour}h) stuck in "sending" for ${Math.round(stuckMinutes)}min — resetting`);
-                        seg.status = "pending";
-                        seg.error = undefined;
-                        await saveSchedule(schedule);
-                    } else {
-                        log(`  ⏳ Seg ${seg.segIdx} (${seg.hour}h) currently sending, skip`);
-                        continue;
-                    }
-                }
-
-                // Auto-reset "error" segments to retry
-                if (seg.status === "error") {
-                    log(`  🔄 Seg ${seg.segIdx} (${seg.hour}h) was error — retrying`);
-                    seg.status = "pending";
-                    seg.error = undefined;
+                    log(`  ⏳ Seg ${seg.segIdx} (${seg.hour}h) currently sending, skip`);
+                    continue;
                 }
 
                 // Check if it's time to fire
@@ -207,7 +189,9 @@ async function fireSegment(
     log: (msg: string) => void
 ): Promise<{ scheduleId: string; segIdx: number; hour: number; recipients: number; success: number; errors: number }> {
     // 1. Fetch customers for this shop+page
-    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "https://talpha-dashboard.vercel.app";
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL
+        || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null)
+        || "https://talpha-dashboard.vercel.app";
 
     const custUrl = `${baseUrl}/api/broadcast?shopId=${schedule.shopId}&pageFilter=${schedule.pageId}`;
     log(`  📡 Fetching customers: ${custUrl.replace(/api_key=[^&]+/, "api_key=***")}`);
@@ -245,58 +229,43 @@ async function fireSegment(
         return { scheduleId: schedule.id, segIdx: seg.segIdx, hour: seg.hour, recipients: 0, success: 0, errors: 0 };
     }
 
-    // 3. Send messages in batches of 10, max 100 per cron run (Vercel Hobby = 60s timeout)
-    const MAX_PER_CRON = 100;
-    const BATCH_SIZE = 10;
+    // 3. Send messages in parallel batches
     let successCount = 0;
     let errorCount = 0;
-    const sendList = recipients.slice(0, MAX_PER_CRON);
-    const remaining = recipients.length - sendList.length;
-    if (remaining > 0) {
-        log(`  ⚠️ Limiting to ${MAX_PER_CRON}/${recipients.length} recipients (remaining ${remaining} next cron)`);
-    }
+    const BATCH_SIZE = 20;
 
-    for (let i = 0; i < sendList.length; i += BATCH_SIZE) {
-        const batch = sendList.slice(i, i + BATCH_SIZE);
-        try {
-            const res = await fetch(`${baseUrl}/api/broadcast`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    recipients: batch,
-                    message: seg.message,
-                    forceGraphAPI: true,
-                    skipDedup: true,
-                }),
-            });
-            const data = await res.json();
-            const batchResults = data.results || [];
-            for (const r of batchResults) {
-                if (r.success) successCount++;
-                else {
-                    errorCount++;
-                    // Log first few errors for debugging
-                    if (errorCount <= 3) {
-                        log(`  ❌ ${r.name || r.psid}: ${r.error || "Unknown error"}`);
-                    }
-                }
+    for (let i = 0; i < recipients.length; i += BATCH_SIZE) {
+        const batch = recipients.slice(i, i + BATCH_SIZE);
+        
+        const promises = batch.map(async (recipient) => {
+            try {
+                const res = await fetch(`${baseUrl}/api/broadcast`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        recipients: [recipient],
+                        message: seg.message,
+                        forceGraphAPI: true,
+                    }),
+                });
+                const data = await res.json();
+                if (data.results?.[0]?.success) return true;
+                if (i === 0) log(`  ❌ ${recipient.name}: ${data.results?.[0]?.error || "Unknown"}`);
+                return false;
+            } catch {
+                return false;
             }
-            // Log raw response for first batch
-            if (i === 0 && batchResults.length === 0) {
-                log(`  ⚠️ Empty results from broadcast API: ${JSON.stringify(data).slice(0, 200)}`);
-            }
-        } catch {
-            errorCount += batch.length;
-        }
+        });
 
-        // Short delay between batches (100ms)
-        if (i + BATCH_SIZE < sendList.length) {
-            await new Promise((r) => setTimeout(r, 100));
-        }
+        const batchResults = await Promise.all(promises);
+        successCount += batchResults.filter(Boolean).length;
+        errorCount += batchResults.filter(r => !r).length;
 
-        // Log progress every 50
-        if ((i + BATCH_SIZE) % 50 === 0 || i + BATCH_SIZE >= sendList.length) {
-            log(`  📊 Progress: ${Math.min(i + BATCH_SIZE, sendList.length)}/${sendList.length} (✅${successCount} ❌${errorCount})`);
+        log(`  📊 Progress: ${Math.min(i + BATCH_SIZE, recipients.length)}/${recipients.length} (✅${successCount} ❌${errorCount})`);
+
+        // Delay between batches to respect rate limits
+        if (i + BATCH_SIZE < recipients.length) {
+            await new Promise((r) => setTimeout(r, 1000));
         }
     }
 

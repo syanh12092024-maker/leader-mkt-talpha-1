@@ -592,15 +592,17 @@ export default function BroadcastTab() {
                 const currentDecimal = targetNow.getHours() + targetNow.getMinutes() / 60;
 
                 for (const seg of schedule.segments) {
-                    // Đã chạy hôm nay rồi?
-                    if (seg.status === 'sent' && schedule.lastRunDate === todayStr) continue;
-                    if (seg.status === 'sending') continue;
-                    // Reset status nếu sang ngày mới
+                    // Reset status nếu sang ngày mới — LÀM TRƯỚC MỌI check
+                    // để không bị kẹt ở 'sending'/'error'/'sent' khi qua ngày
                     if (schedule.lastRunDate && schedule.lastRunDate !== todayStr) {
                         seg.status = 'pending';
                         seg.error = undefined;
                         seg.sentAt = undefined;
                     }
+                    // Đã chạy hôm nay rồi?
+                    if (seg.status === 'sent' && schedule.lastRunDate === todayStr) continue;
+                    // 'sending' chỉ skip nếu CÙNG NGÀY (tránh kẹt xuyên ngày)
+                    if (seg.status === 'sending' && schedule.lastRunDate === todayStr) continue;
                     // Đã đến giờ? → fire bất kỳ segment nào đã qua giờ mà chưa sent hôm nay
                     if (currentDecimal >= seg.hour && seg.status !== 'sent') {
                         autoFireRef.current = true;
@@ -611,9 +613,24 @@ export default function BroadcastTab() {
 
                         try {
                             // Lấy customers cho shop+page này
-                            const custRes = await fetch(`/api/broadcast?shopId=${schedule.shopId}&pageFilter=${schedule.pageId}`);
+                            const fetchUrl = `/api/broadcast?shopId=${encodeURIComponent(schedule.shopId || '')}&pageFilter=${encodeURIComponent(schedule.pageId || '')}`;
+                            console.log(`[auto-fire] GET ${fetchUrl}`);
+                            const custRes = await fetch(fetchUrl);
                             const custData = await custRes.json();
+
+                            // ═══ SURFACE API ERRORS thay vì nuốt im lặng ═══
+                            if (!custRes.ok) {
+                                throw new Error(`API ${custRes.status}: ${custData?.error || 'Unknown'}`);
+                            }
+                            if (custData?.error) {
+                                throw new Error(`API error: ${custData.error}`);
+                            }
+                            if (custData?.crmWarning && (!custData.customers || custData.customers.length === 0)) {
+                                throw new Error(custData.crmWarning);
+                            }
+
                             let allCust: Customer[] = custData.customers || [];
+                            console.log(`[auto-fire] Got ${allCust.length} customers for ${schedule.pageName}`);
 
                             // ═══ ÁP DỤNG FILTER TỪ LỊCH — loại khách đã mua ═══
                             if (schedule.filterPurchase === 'no_purchase') {
@@ -640,7 +657,10 @@ export default function BroadcastTab() {
 
                             if (recipients.length === 0) {
                                 seg.status = 'error';
-                                seg.error = 'Không có khách hàng';
+                                const totalFetched = (custData.customers || []).length;
+                                seg.error = totalFetched === 0
+                                    ? 'API trả 0 khách — check Pancake token hoặc shopId/pageId'
+                                    : `Sau filter "${schedule.filterPurchase || 'none'}" còn 0/${totalFetched} khách`;
                             } else {
                                 // Gửi tin nhắn
                                 let successCount = 0;
